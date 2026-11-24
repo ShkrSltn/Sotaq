@@ -1,2 +1,10 @@
 # Sotaq
-App for me (everything)
+
+App for me (everything).
+
+## Start
+
+```bash
+npm run web
+npm run android
+```

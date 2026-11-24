@@ -8,6 +8,7 @@ const ITEMS = [
   { href: '/', label: 'Главная' },
   { href: '/board', label: 'Доска' },
   { href: '/todos', label: 'Список' },
+  { href: '/chat', label: 'Чат' },
 ] as const;
 
 const palette = {
@@ -61,9 +62,10 @@ export function TopNav() {
 const styles = StyleSheet.create({
   bar: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
-    gap: 20,
-    paddingHorizontal: 20,
+    gap: 8,
+    paddingHorizontal: 16,
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },

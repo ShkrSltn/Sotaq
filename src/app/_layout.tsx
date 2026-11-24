@@ -1,6 +1,8 @@
+import 'react-native-gesture-handler';
 import { Slot } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { TopNav } from '@/components/top-nav';
@@ -15,13 +17,15 @@ export default function RootLayout() {
   const scheme = useResolvedColorScheme();
 
   return (
-    <SafeAreaView style={[styles.screen, { backgroundColor: background[scheme] }]}>
-      <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
-      <TopNav />
-      <View style={styles.content}>
-        <Slot />
-      </View>
-    </SafeAreaView>
+    <GestureHandlerRootView style={[styles.screen, { backgroundColor: background[scheme] }]}>
+      <SafeAreaView style={[styles.screen, { backgroundColor: background[scheme] }]}>
+        <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
+        <TopNav />
+        <View style={styles.content}>
+          <Slot />
+        </View>
+      </SafeAreaView>
+    </GestureHandlerRootView>
   );
 }
 

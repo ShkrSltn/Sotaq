@@ -27,7 +27,7 @@ type Props = Omit<PressableProps, 'android_ripple' | 'style'> & {
 
 // Android uses the system ink ripple. Web draws the same wave from the press point.
 export const RipplePressable = forwardRef<View, Props>(function RipplePressable(
-  { children, style, disabled, onPressIn, onLayout, ...rest },
+  { children, style, disabled, onPress, onPressIn, onLayout, ...rest },
   ref,
 ) {
   const scheme = useResolvedColorScheme();
@@ -67,16 +67,14 @@ export const RipplePressable = forwardRef<View, Props>(function RipplePressable(
         };
         onLayout?.(event);
       }}
-      onPressIn={(event) => {
+      onPress={(event) => {
         if (Platform.OS !== 'android' && !disabled) {
           const { locationX, locationY } = event.nativeEvent;
-          spawn(
-            locationX || size.current.width / 2,
-            locationY || size.current.height / 2,
-          );
+          spawn(locationX || size.current.width / 2, locationY || size.current.height / 2);
         }
-        onPressIn?.(event);
+        onPress?.(event);
       }}
+      onPressIn={onPressIn}
       {...rest}>
       {children}
       {Platform.OS === 'android' ? null : (

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ScrollView as GestureScrollView } from 'react-native-gesture-handler';
 import {
   ScrollView,
   StyleSheet,
@@ -63,6 +64,7 @@ export function KanbanBoard() {
   const { width } = useWindowDimensions();
   const nextId = useRef(INITIAL_CARDS.length + 1);
   const [cards, setCards] = useState<Card[]>(INITIAL_CARDS);
+  const [trackHeight, setTrackHeight] = useState(0);
   // Window size differs between the server and the browser. Measure after mount.
   const [viewportWidth, setViewportWidth] = useState<number | null>(null);
 
@@ -116,6 +118,7 @@ export function KanbanBoard() {
       title={column.title}
       columnId={column.id}
       width={columnWidth}
+      height={sideBySide ? undefined : trackHeight || undefined}
       colors={colors}
       cards={cards.filter((card) => card.columnId === column.id)}
       onAdd={addCard}
@@ -129,13 +132,20 @@ export function KanbanBoard() {
       {sideBySide ? (
         <View style={styles.row}>{columns}</View>
       ) : (
-        <ScrollView
+        <GestureScrollView
           horizontal
+          nestedScrollEnabled
+          directionalLockEnabled
+          keyboardShouldPersistTaps="handled"
           showsHorizontalScrollIndicator={false}
           style={styles.scroller}
-          contentContainerStyle={styles.row}>
+          contentContainerStyle={styles.scrollRow}
+          onLayout={(event) => {
+            const nextHeight = event.nativeEvent.layout.height;
+            setTrackHeight((current) => (current === nextHeight ? current : nextHeight));
+          }}>
           {columns}
-        </ScrollView>
+        </GestureScrollView>
       )}
     </View>
   );
@@ -145,6 +155,7 @@ function Column({
   title,
   columnId,
   width,
+  height,
   colors,
   cards,
   onAdd,
@@ -154,6 +165,7 @@ function Column({
   title: string;
   columnId: ColumnId;
   width: number | undefined;
+  height: number | undefined;
   colors: Colors;
   cards: Card[];
   onAdd: (columnId: ColumnId, title: string) => void;
@@ -172,8 +184,8 @@ function Column({
     <View
       style={[
         styles.column,
-        { backgroundColor: colors.column, width },
-        width == null && styles.columnFlex,
+        { backgroundColor: colors.column, width, height },
+        width == null ? styles.columnFlex : styles.columnFixed,
       ]}>
       <View style={styles.columnHeader}>
         <Text style={[styles.columnTitle, { color: colors.text }]}>{title}</Text>
@@ -181,6 +193,7 @@ function Column({
       </View>
 
       <ScrollView
+        nestedScrollEnabled
         style={styles.cardList}
         contentContainerStyle={styles.cardListContent}
         showsVerticalScrollIndicator={false}
@@ -284,6 +297,11 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
     gap: 12,
   },
+  scrollRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 12,
+  },
   column: {
     borderRadius: 16,
     paddingTop: 14,
@@ -292,6 +310,10 @@ const styles = StyleSheet.create({
   columnFlex: {
     flex: 1,
     minWidth: 0,
+  },
+  columnFixed: {
+    flexGrow: 0,
+    flexShrink: 0,
   },
   columnHeader: {
     flexDirection: 'row',

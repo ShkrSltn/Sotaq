@@ -4,7 +4,10 @@ import { StyleSheet, Text, View } from 'react-native';
 import { RipplePressable } from '@/components/ripple-pressable';
 import { useResolvedColorScheme } from '@/hooks/use-resolved-color-scheme';
 
-const ITEMS = [{ href: '/', label: 'Главная' }] as const;
+const ITEMS = [
+  { href: '/', label: 'Главная' },
+  { href: '/board', label: 'Доска' },
+] as const;
 
 const palette = {
   light: {

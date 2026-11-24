@@ -7,6 +7,7 @@ import { useResolvedColorScheme } from '@/hooks/use-resolved-color-scheme';
 const ITEMS = [
   { href: '/', label: 'Главная' },
   { href: '/board', label: 'Доска' },
+  { href: '/todos', label: 'Список' },
 ] as const;
 
 const palette = {

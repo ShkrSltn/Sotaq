@@ -6,6 +6,7 @@ import { migration002Kanban } from '@/db/migrations/002_kanban';
 import { migration003Todos } from '@/db/migrations/003_todos';
 import { migration004AuthRbac } from '@/db/migrations/004_auth_rbac';
 import { migration005Notes } from '@/db/migrations/005_notes';
+import { migration006LanguageLab } from '@/db/migrations/006_language_lab';
 
 export const MIGRATIONS: readonly Migration[] = [
   migration001Initial,
@@ -13,6 +14,7 @@ export const MIGRATIONS: readonly Migration[] = [
   migration003Todos,
   migration004AuthRbac,
   migration005Notes,
+  migration006LanguageLab,
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;

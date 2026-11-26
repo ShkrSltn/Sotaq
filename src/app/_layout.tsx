@@ -40,6 +40,9 @@ function ProtectedNavigator() {
           <Stack.Protected guard={canAccess('notes')}>
             <Stack.Screen name="notes" />
           </Stack.Protected>
+          <Stack.Protected guard={canAccess('language')}>
+            <Stack.Screen name="language" />
+          </Stack.Protected>
           <Stack.Protected guard={canAccess('admin')}>
             <Stack.Screen name="admin" />
           </Stack.Protected>

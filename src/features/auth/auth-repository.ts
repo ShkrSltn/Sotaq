@@ -488,6 +488,7 @@ export async function deleteUserByAdmin(
     await db.runAsync('DELETE FROM todos WHERE user_id = ?;', targetUserId);
     await db.runAsync('DELETE FROM todo_lists WHERE user_id = ?;', targetUserId);
     await db.runAsync('DELETE FROM note_pages WHERE user_id = ?;', targetUserId);
+    await db.runAsync('DELETE FROM languages WHERE user_id = ?;', targetUserId);
     await db.runAsync('DELETE FROM users WHERE id = ?;', targetUserId);
   });
 }

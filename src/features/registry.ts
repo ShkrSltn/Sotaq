@@ -69,10 +69,10 @@ export const FEATURES: readonly FeatureDefinition[] = [
     shortTitle: 'Языки',
     description: 'Личный словарь и разбор предложений с ИИ',
     badge: '文',
-    route: null,
-    status: 'planned',
-    stageLabel: 'Этап 6',
+    route: '/language' as Href,
+    status: 'active',
     defaultUserEnabled: true,
+    showInMobileBar: true,
   },
   {
     key: 'admin',

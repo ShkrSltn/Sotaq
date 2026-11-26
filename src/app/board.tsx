@@ -1,5 +1,5 @@
-import { KanbanBoard } from '@/components/kanban-board';
+import { KanbanWorkspace } from '@/features/kanban/components/kanban-workspace';
 
 export default function BoardScreen() {
-  return <KanbanBoard />;
+  return <KanbanWorkspace />;
 }

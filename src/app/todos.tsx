@@ -1,5 +1,5 @@
-import { TodoList } from '@/components/todo-list';
+import { TodoWorkspace } from '@/features/todos/components/todo-workspace';
 
 export default function TodosScreen() {
-  return <TodoList />;
+  return <TodoWorkspace />;
 }

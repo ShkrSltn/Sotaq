@@ -1,4 +1,4 @@
-import { forwardRef, useRef, useState } from 'react';
+import { type ComponentRef, forwardRef, type ReactNode, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
@@ -21,15 +21,17 @@ type Ripple = {
   progress: Animated.Value;
 };
 
-type Props = Omit<PressableProps, 'android_ripple' | 'style'> & {
+type Props = Omit<PressableProps, 'android_ripple' | 'style' | 'children'> & {
+  children?: ReactNode;
   style?: StyleProp<ViewStyle>;
 };
 
 // Android uses the system ink ripple. Web draws the same wave from the press point.
-export const RipplePressable = forwardRef<View, Props>(function RipplePressable(
-  { children, style, disabled, onPress, onPressIn, onLayout, ...rest },
-  ref,
-) {
+export const RipplePressable = forwardRef<ComponentRef<typeof Pressable>, Props>(
+  function RipplePressable(
+    { children, style, disabled, onPress, onPressIn, onLayout, ...rest },
+    ref,
+  ) {
   const scheme = useResolvedColorScheme();
   const rippleColor = scheme === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(22,24,29,0.14)';
   const nextId = useRef(0);
@@ -118,7 +120,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   wave: {
     position: 'absolute',

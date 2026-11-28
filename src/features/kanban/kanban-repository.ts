@@ -397,13 +397,33 @@ export async function deleteColumn(db: SQLiteDatabase, columnId: string): Promis
   await db.runAsync('DELETE FROM kanban_columns WHERE id = ?;', columnId);
 }
 
+export async function reorderColumns(
+  db: SQLiteDatabase,
+  boardId: string,
+  orderedColumnIds: string[],
+): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    for (let index = 0; index < orderedColumnIds.length; index += 1) {
+      await db.runAsync(
+        'UPDATE kanban_columns SET position = ? WHERE id = ? AND board_id = ?;',
+        index,
+        orderedColumnIds[index],
+        boardId,
+      );
+    }
+  });
+}
+
 export async function createCard(
   db: SQLiteDatabase,
   input: {
     boardId: string;
     columnId: string;
     title: string;
+    description?: string;
     priority?: KanbanPriority;
+    dueDate?: string | null;
+    subtasks?: string[];
   },
 ): Promise<KanbanCardRecord> {
   const now = nowIso();
@@ -414,33 +434,61 @@ export async function createCard(
   );
   const position = (maxRow?.max_pos ?? -1) + 1;
   const priority = input.priority ?? 'medium';
+  const description = input.description?.trim() ?? '';
+  const dueDate = input.dueDate ?? null;
+  const cleanSubtasks = (input.subtasks ?? [])
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  const createdSubtasks: KanbanSubtaskRecord[] = [];
 
-  await db.runAsync(
-    `INSERT INTO kanban_cards
-       (id, board_id, column_id, title, description, priority, due_date, position, created_at, updated_at)
-     VALUES (?, ?, ?, ?, '', ?, NULL, ?, ?, ?);`,
-    id,
-    input.boardId,
-    input.columnId,
-    input.title.trim(),
-    priority,
-    position,
-    now,
-    now,
-  );
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `INSERT INTO kanban_cards
+         (id, board_id, column_id, title, description, priority, due_date, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      id,
+      input.boardId,
+      input.columnId,
+      input.title.trim(),
+      description,
+      priority,
+      dueDate,
+      position,
+      now,
+      now,
+    );
+
+    for (let idx = 0; idx < cleanSubtasks.length; idx += 1) {
+      const subId = createId();
+      await db.runAsync(
+        'INSERT INTO kanban_card_subtasks (id, card_id, title, is_done, position) VALUES (?, ?, ?, 0, ?);',
+        subId,
+        id,
+        cleanSubtasks[idx],
+        idx,
+      );
+      createdSubtasks.push({
+        id: subId,
+        cardId: id,
+        title: cleanSubtasks[idx],
+        isDone: false,
+        position: idx,
+      });
+    }
+  });
 
   return {
     id,
     boardId: input.boardId,
     columnId: input.columnId,
     title: input.title.trim(),
-    description: '',
+    description,
     priority,
-    dueDate: null,
+    dueDate,
     position,
     createdAt: now,
     updatedAt: now,
-    subtasks: [],
+    subtasks: createdSubtasks,
   };
 }
 
@@ -576,4 +624,79 @@ export async function toggleSubtask(
 
 export async function deleteSubtask(db: SQLiteDatabase, subtaskId: string): Promise<void> {
   await db.runAsync('DELETE FROM kanban_card_subtasks WHERE id = ?;', subtaskId);
+}
+
+export async function reorderSubtasks(
+  db: SQLiteDatabase,
+  cardId: string,
+  orderedSubtaskIds: string[],
+): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    for (let index = 0; index < orderedSubtaskIds.length; index += 1) {
+      await db.runAsync(
+        'UPDATE kanban_card_subtasks SET position = ? WHERE id = ? AND card_id = ?;',
+        index,
+        orderedSubtaskIds[index],
+        cardId,
+      );
+    }
+  });
+}
+
+export async function restoreBoardSnapshot(
+  db: SQLiteDatabase,
+  boardId: string,
+  snapshot: { columns: KanbanColumnRecord[]; cards: KanbanCardRecord[] },
+): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('DELETE FROM kanban_cards WHERE board_id = ?;', boardId);
+    await db.runAsync('DELETE FROM kanban_columns WHERE board_id = ?;', boardId);
+
+    for (let idx = 0; idx < snapshot.columns.length; idx += 1) {
+      const col = snapshot.columns[idx];
+      await db.runAsync(
+        `INSERT INTO kanban_columns
+           (id, board_id, title, accent, position, is_done_column, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?);`,
+        col.id,
+        boardId,
+        col.title,
+        col.accent,
+        idx,
+        col.isDoneColumn ? 1 : 0,
+        col.createdAt,
+      );
+    }
+
+    for (const card of snapshot.cards) {
+      await db.runAsync(
+        `INSERT INTO kanban_cards
+           (id, board_id, column_id, title, description, priority, due_date, position, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        card.id,
+        boardId,
+        card.columnId,
+        card.title,
+        card.description,
+        card.priority,
+        card.dueDate,
+        card.position,
+        card.createdAt,
+        card.updatedAt,
+      );
+
+      for (let subIdx = 0; subIdx < card.subtasks.length; subIdx += 1) {
+        const sub = card.subtasks[subIdx];
+        await db.runAsync(
+          `INSERT INTO kanban_card_subtasks (id, card_id, title, is_done, position)
+           VALUES (?, ?, ?, ?, ?);`,
+          sub.id,
+          card.id,
+          sub.title,
+          sub.isDone ? 1 : 0,
+          subIdx,
+        );
+      }
+    }
+  });
 }

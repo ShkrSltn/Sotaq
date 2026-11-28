@@ -294,24 +294,64 @@ export const PAGE_COVERS: Record<
   violet: { label: 'Индиго', light: '#DFD6FA', dark: '#261D3B', accent: '#8B5CF6' },
 };
 
-export const PAGE_ICONS = [
-  '📄',
-  '📝',
-  '💡',
-  '🧠',
-  '📌',
-  '✅',
-  '🗂',
-  '🔖',
-  '🧭',
-  '🛠',
-  '⚡',
-  '🎯',
-  '📚',
-  '🌿',
-  '☕',
-  '🔥',
+export const PAGE_ICONS: readonly IconName[] = [
+  'notes',
+  'edit',
+  'callout',
+  'brain',
+  'pin',
+  'todos',
+  'folder',
+  'bookmark',
+  'compass',
+  'wrench',
+  'zap',
+  'target',
+  'bookOpen',
+  'leaf',
+  'coffee',
+  'flame',
+  'rocket',
+  'sparkles',
 ] as const;
+
+const LEGACY_EMOJI_TO_ICON: Record<string, IconName> = {
+  '📄': 'notes',
+  '📝': 'edit',
+  '💡': 'callout',
+  '🧠': 'brain',
+  '📌': 'pin',
+  '✅': 'todos',
+  '🗂': 'folder',
+  '🗂️': 'folder',
+  '📁': 'folder',
+  '🔖': 'bookmark',
+  '🧭': 'compass',
+  '🛠': 'wrench',
+  '🛠️': 'wrench',
+  '⚡': 'zap',
+  '🎯': 'target',
+  '📚': 'bookOpen',
+  '🌿': 'leaf',
+  '☕': 'coffee',
+  '🔥': 'flame',
+  '🚀': 'rocket',
+  '✨': 'sparkles',
+  '⭐': 'star',
+  '📋': 'todos',
+};
+
+const VALID_PAGE_ICON_SET = new Set<string>(PAGE_ICONS);
+
+export function resolveNotePageIcon(raw: string | null | undefined): IconName {
+  if (!raw) {
+    return 'notes';
+  }
+  if (VALID_PAGE_ICON_SET.has(raw)) {
+    return raw as IconName;
+  }
+  return LEGACY_EMOJI_TO_ICON[raw] ?? 'notes';
+}
 
 export const NOTION_DROP_BLUE = '#2383E2';
 

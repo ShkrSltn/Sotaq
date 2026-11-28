@@ -21,6 +21,7 @@ import {
   type NoteBlockRecord,
   type NoteBlockType,
   type NotePageRecord,
+  resolveNotePageIcon,
   TURN_INTO_TYPES,
 } from '@/features/notes/types';
 import { useThemeColors } from '@/theme/colors';
@@ -438,9 +439,12 @@ function MobilePageActionsSheetContent({
           </View>
 
           <View style={[styles.header, { borderBottomColor: colors.line }]}>
-            <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
-              {page.icon} {page.title.trim() || 'Без названия'}
-            </Text>
+            <View style={styles.headerTitleRow}>
+              <AppIcon name={resolveNotePageIcon(page.icon)} size="sm" color={colors.muted} />
+              <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
+                {page.title.trim() || 'Без названия'}
+              </Text>
+            </View>
             <RipplePressable
               onPress={saveRenameAndClose}
               style={StyleSheet.flatten([
@@ -585,9 +589,18 @@ function MobilePageActionsSheetContent({
                         styles.moveTargetRow,
                         { backgroundColor: colors.surface },
                       ])}>
-                      <Text style={[styles.moveTargetText, { color: colors.text }]} numberOfLines={1}>
-                        {target.icon} {target.title.trim() || 'Без названия'}
-                      </Text>
+                      <View style={styles.sheetActionLeft}>
+                        <AppIcon
+                          name={resolveNotePageIcon(target.icon)}
+                          size="sm"
+                          color={colors.muted}
+                        />
+                        <Text
+                          style={[styles.moveTargetText, { color: colors.text }]}
+                          numberOfLines={1}>
+                          {target.title.trim() || 'Без названия'}
+                        </Text>
+                      </View>
                     </RipplePressable>
                   ))}
                 </View>
@@ -667,8 +680,15 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  headerTitle: {
+  headerTitleRow: {
     flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minWidth: 0,
+  },
+  headerTitle: {
+    flexShrink: 1,
     fontSize: 16,
     fontWeight: '700',
   },

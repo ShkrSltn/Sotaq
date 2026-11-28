@@ -11,7 +11,11 @@ import { DragTrashZone } from '@/components/drag-trash-zone';
 import { RipplePressable } from '@/components/ripple-pressable';
 import { WebDragBox } from '@/components/web-drag-box';
 import { MobilePageActionsSheet } from '@/features/notes/components/mobile-sheets';
-import { NOTION_DROP_BLUE, type NotePageRecord } from '@/features/notes/types';
+import {
+  NOTION_DROP_BLUE,
+  type NotePageRecord,
+  resolveNotePageIcon,
+} from '@/features/notes/types';
 import { useResolvedColorScheme } from '@/hooks/use-resolved-color-scheme';
 import type { ThemeColors } from '@/theme/colors';
 
@@ -236,9 +240,11 @@ export function PageTree({
             {/* 2. Page Title Hit Area (draggable source on web, independent sibling) */}
             {isRenaming ? (
               <View style={styles.rowMain}>
-                <Text style={[styles.pageIcon, !isDesktop ? styles.pageIconMobile : null]}>
-                  {page.icon}
-                </Text>
+                <AppIcon
+                  name={resolveNotePageIcon(page.icon)}
+                  size={isDesktop ? 15 : 17}
+                  color={colors.muted}
+                />
                 <TextInput
                   value={renameDraft}
                   onChangeText={setRenameDraft}
@@ -275,9 +281,11 @@ export function PageTree({
                     onSelectPage(page.id);
                   }}
                   style={styles.rowMain}>
-                  <Text style={[styles.pageIcon, !isDesktop ? styles.pageIconMobile : null]}>
-                    {page.icon}
-                  </Text>
+                  <AppIcon
+                    name={resolveNotePageIcon(page.icon)}
+                    size={isDesktop ? 15 : 17}
+                    color={isActive || isHovered ? colors.text : colors.muted}
+                  />
                   <Text
                     style={[
                       styles.pageTitle,
@@ -452,7 +460,7 @@ export function PageTree({
             {(mobileFilter === 'favorites' ? favorites : recentPages).length === 0 ? (
               <Text style={[styles.mobileEmptyText, { color: colors.muted }]}>
                 {mobileFilter === 'favorites'
-                  ? 'Пока нет избранных страниц — отметьте звёздочкой ★ любую заметку.'
+                  ? 'Пока нет избранных страниц — отметьте звёздочкой любую заметку.'
                   : 'Пока нет недавних страниц'}
               </Text>
             ) : (
@@ -470,7 +478,11 @@ export function PageTree({
                     <Pressable
                       onPress={() => onSelectPage(page.id)}
                       style={styles.mobileFlatHit}>
-                      <Text style={[styles.pageIcon, styles.pageIconMobile]}>{page.icon}</Text>
+                      <AppIcon
+                        name={resolveNotePageIcon(page.icon)}
+                        size={17}
+                        color={isActive ? colors.text : colors.muted}
+                      />
                       <Text
                         style={[
                           styles.pageTitle,
@@ -507,7 +519,11 @@ export function PageTree({
                         styles.flatRow,
                         isActive ? { backgroundColor: colors.surfaceActive } : null,
                       ])}>
-                      <Text style={styles.pageIcon}>{page.icon}</Text>
+                      <AppIcon
+                        name={resolveNotePageIcon(page.icon)}
+                        size={15}
+                        color={isActive ? colors.text : colors.muted}
+                      />
                       <Text
                         style={[
                           styles.pageTitle,

@@ -131,14 +131,14 @@ export async function ensureInitialNotes(
       rootId,
       userId,
       'Быстрые мысли',
-      '🧠',
+      'brain',
       now,
       now,
       childId,
       userId,
       rootId,
       'Шпаргалка по редактору',
-      '💡',
+      'callout',
       now,
       now,
     );
@@ -247,7 +247,7 @@ export async function ensureDemoNotePages(
       hubId,
       userId,
       'Личный хаб — 2026',
-      '🧭',
+      'compass',
       basePos,
       now,
       now,
@@ -255,27 +255,27 @@ export async function ensureDemoNotePages(
       userId,
       hubId,
       'Идеи и роадмап Sotaq',
-      '🚀',
+      'rocket',
       now,
       now,
       booksId,
       userId,
       hubId,
       'Конспекты и книги',
-      '📚',
+      'bookOpen',
       now,
       now,
       journalId,
       userId,
       'Ежедневный журнал',
-      '⚡',
+      'zap',
       basePos + 1,
       now,
       now,
       techId,
       userId,
       'Технические заметки',
-      '🛠',
+      'wrench',
       basePos + 2,
       now,
       now,
@@ -710,7 +710,7 @@ export async function createNotePage(
       );
   const position = (maxRow?.max_pos ?? -1) + 1;
   const title = input?.title ?? '';
-  const icon = input?.icon ?? '📄';
+  const icon = input?.icon ?? 'notes';
   const coverColor = input?.coverColor ?? null;
 
   await db.withTransactionAsync(async () => {

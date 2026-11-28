@@ -25,6 +25,7 @@ import {
   type NoteBlockRecord,
   type NoteBlockType,
   type NotePageRecord,
+  resolveNotePageIcon,
 } from '@/features/notes/types';
 import { useResolvedColorScheme } from '@/hooks/use-resolved-color-scheme';
 import type { ThemeColors } from '@/theme/colors';
@@ -514,7 +515,11 @@ export function BlockRow({
             borderColor: colors.line,
           },
         ]}>
-        <Text style={styles.pageLinkIcon}>{linkedPage?.icon ?? '📄'}</Text>
+        <AppIcon
+          name={resolveNotePageIcon(linkedPage?.icon)}
+          size="sm"
+          color={colors.muted}
+        />
         <Text style={[styles.pageLinkTitle, { color: colors.text }]} numberOfLines={1}>
           {linkedPage?.title.trim() || 'Без названия'}
         </Text>
@@ -551,9 +556,9 @@ export function BlockRow({
   if (!isDesktop && reorderMode) {
     const previewText =
       block.type === 'divider'
-        ? '─── Разделитель ───'
+        ? 'Разделитель'
         : block.type === 'page'
-          ? `${linkedPage?.icon ?? '📄'} ${linkedPage?.title.trim() || 'Подстраница'}`
+          ? linkedPage?.title.trim() || 'Подстраница'
           : block.content.trim() || 'Пустой блок';
 
     return (

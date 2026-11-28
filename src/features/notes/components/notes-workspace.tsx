@@ -64,6 +64,7 @@ import {
     PAGE_COVERS,
     PAGE_ICONS,
     type PageCoverKey,
+    resolveNotePageIcon,
 } from "@/features/notes/types";
 import { useResolvedColorScheme } from "@/hooks/use-resolved-color-scheme";
 import { useUndoRedoHotkeys } from "@/hooks/use-undo-redo";
@@ -520,7 +521,7 @@ export function NotesWorkspace() {
     if (nextPages.length === 0) {
       const fresh = await createNotePage(db, userId, {
         title: "Новая заметка",
-        icon: "📝",
+        icon: "notes",
       });
       nextPages = [fresh];
     }
@@ -664,7 +665,7 @@ export function NotesWorkspace() {
     const child = await createNotePage(db, userId, {
       parentId: activePageId,
       title: "Новая подстраница",
-      icon: "📄",
+      icon: "notes",
     });
     const updatedPages = await listNotePages(db, userId);
     setPages(updatedPages);
@@ -1221,6 +1222,11 @@ export function NotesWorkspace() {
                           onPress={() => selectPage(crumb.id)}
                           style={styles.crumbBtn}
                         >
+                          <AppIcon
+                            name={resolveNotePageIcon(crumb.icon)}
+                            size={13}
+                            color={isLast ? colors.text : colors.muted}
+                          />
                           <Text
                             style={[
                               styles.crumbText,
@@ -1228,7 +1234,7 @@ export function NotesWorkspace() {
                             ]}
                             numberOfLines={1}
                           >
-                            {crumb.icon} {crumb.title.trim() || "Без названия"}
+                            {crumb.title.trim() || "Без названия"}
                           </Text>
                         </RipplePressable>
                       </View>
@@ -1457,12 +1463,17 @@ export function NotesWorkspace() {
                         }}
                         style={StyleSheet.flatten([
                           styles.pageIconBtn,
-                          { backgroundColor: colors.surface },
+                          {
+                            backgroundColor: colors.surface,
+                            borderColor: colors.line,
+                          },
                         ])}
                       >
-                        <Text style={styles.pageIconLarge}>
-                          {activePage.icon}
-                        </Text>
+                        <AppIcon
+                          name={resolveNotePageIcon(activePage.icon)}
+                          size={24}
+                          color={colors.text}
+                        />
                       </RipplePressable>
                     </View>
 
@@ -1762,7 +1773,11 @@ export function NotesWorkspace() {
                             },
                           ])}
                         >
-                          <Text style={styles.subpageIcon}>{child.icon}</Text>
+                          <AppIcon
+                            name={resolveNotePageIcon(child.icon)}
+                            size="sm"
+                            color={colors.muted}
+                          />
                           <Text
                             style={[
                               styles.subpageTitle,
@@ -2208,35 +2223,40 @@ export function NotesWorkspace() {
         ) : null}
       </AnchoredPopover>
 
-      {/* Floating Emoji Icon Picker Popover — zero layout shift */}
+      {/* Floating Vector Icon Picker Popover — zero layout shift */}
       <AnchoredPopover
         visible={iconPickerOpen && activePage !== null}
         anchor={iconPickerAnchor}
-        width={260}
-        estimatedHeight={152}
+        width={256}
+        estimatedHeight={156}
         align="left"
         colors={colors}
         onClose={() => setIconPickerOpen(false)}
       >
         {activePage ? (
           <View style={styles.pickerGrid}>
-            {PAGE_ICONS.map((emoji) => (
-              <RipplePressable
-                key={emoji}
-                onPress={() => {
-                  handleUpdatePageMeta(activePage.id, { icon: emoji });
-                  setIconPickerOpen(false);
-                }}
-                style={StyleSheet.flatten([
-                  styles.emojiOption,
-                  activePage.icon === emoji
-                    ? { backgroundColor: colors.surfaceActive }
-                    : null,
-                ])}
-              >
-                <Text style={styles.emojiGlyph}>{emoji}</Text>
-              </RipplePressable>
-            ))}
+            {PAGE_ICONS.map((iconName) => {
+              const selected = resolveNotePageIcon(activePage.icon) === iconName;
+              return (
+                <RipplePressable
+                  key={iconName}
+                  onPress={() => {
+                    handleUpdatePageMeta(activePage.id, { icon: iconName });
+                    setIconPickerOpen(false);
+                  }}
+                  style={StyleSheet.flatten([
+                    styles.emojiOption,
+                    selected ? { backgroundColor: colors.surfaceActive } : null,
+                  ])}
+                >
+                  <AppIcon
+                    name={iconName}
+                    size="md"
+                    color={selected ? colors.text : colors.muted}
+                  />
+                </RipplePressable>
+              );
+            })}
           </View>
         ) : null}
       </AnchoredPopover>
@@ -2362,14 +2382,18 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   crumbBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
     paddingHorizontal: 6,
     paddingVertical: 4,
     borderRadius: 6,
-    maxWidth: 180,
+    maxWidth: 190,
   },
   crumbText: {
     fontSize: 13,
     fontWeight: "500",
+    flexShrink: 1,
   },
   saveText: {
     fontSize: 11,

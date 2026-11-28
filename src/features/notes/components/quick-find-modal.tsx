@@ -14,7 +14,7 @@ import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/app-icon';
-import type { NotePageRecord } from '@/features/notes/types';
+import { type NotePageRecord, resolveNotePageIcon } from '@/features/notes/types';
 import { useThemeColors, useViewport } from '@/theme/colors';
 
 type Props = {
@@ -183,7 +183,17 @@ function QuickFindModalContent({
                         styles.resultRow,
                         active ? { backgroundColor: colors.surfaceActive } : null,
                       ]}>
-                      <Text style={styles.resultIcon}>{page.icon}</Text>
+                      <View
+                        style={[
+                          styles.resultIconWrap,
+                          { backgroundColor: colors.surfaceSubtle },
+                        ]}>
+                        <AppIcon
+                          name={resolveNotePageIcon(page.icon)}
+                          size="sm"
+                          color={active ? colors.text : colors.muted}
+                        />
+                      </View>
                       <View style={styles.resultMeta}>
                         <Text style={[styles.resultTitle, { color: colors.text }]} numberOfLines={1}>
                           {page.title.trim() || 'Без названия'}
@@ -318,8 +328,12 @@ const styles = StyleSheet.create({
       ? ({ cursor: 'pointer', transition: 'background-color 110ms ease' } as object)
       : null),
   },
-  resultIcon: {
-    fontSize: 16,
+  resultIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   resultMeta: {
     flex: 1,

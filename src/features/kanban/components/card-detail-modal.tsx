@@ -20,6 +20,9 @@ import { WebDragBox } from '@/components/web-drag-box';
 import {
   addDaysDateKey,
   formatDueDateLabel,
+  getBoardColorDisplayName,
+  hexWithAlpha,
+  type KanbanBoardColorRecord,
   type KanbanCardRecord,
   type KanbanColumnRecord,
   type KanbanPriority,
@@ -30,6 +33,7 @@ import { useThemeColors, useViewport } from '@/theme/colors';
 type Props = {
   card: KanbanCardRecord | null;
   columns: KanbanColumnRecord[];
+  boardColors: KanbanBoardColorRecord[];
   cardIndex: number;
   columnCardCount: number;
   onClose: () => void;
@@ -40,6 +44,7 @@ type Props = {
       description: string;
       priority: KanbanPriority;
       dueDate: string | null;
+      colorId: string | null;
     },
   ) => Promise<void>;
   onMoveColumn: (cardId: string, targetColumnId: string) => Promise<void>;
@@ -63,6 +68,7 @@ export function CardDetailModal(props: Props) {
 function CardDetailModalContent({
   card,
   columns,
+  boardColors,
   cardIndex,
   columnCardCount,
   onClose,
@@ -83,6 +89,7 @@ function CardDetailModalContent({
   const [description, setDescription] = useState(card.description);
   const [priority, setPriority] = useState<KanbanPriority>(card.priority);
   const [dueDate, setDueDate] = useState<string | null>(card.dueDate);
+  const [colorId, setColorId] = useState<string | null>(card.colorId);
   const [subtaskDraft, setSubtaskDraft] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [draggingSubtaskId, setDraggingSubtaskId] = useState<string | null>(null);
@@ -103,13 +110,15 @@ function CardDetailModalContent({
       cleanTitle !== activeCard.title ||
       description !== activeCard.description ||
       priority !== activeCard.priority ||
-      dueDate !== activeCard.dueDate
+      dueDate !== activeCard.dueDate ||
+      colorId !== activeCard.colorId
     ) {
       await onSave(activeCard.id, {
         title: cleanTitle,
         description,
         priority,
         dueDate,
+        colorId,
       });
     }
     onClose();
@@ -121,17 +130,20 @@ function CardDetailModalContent({
       description: string;
       priority: KanbanPriority;
       dueDate: string | null;
+      colorId: string | null;
     }>,
   ) {
     const nextTitle = (override.title ?? title).trim() || activeCard.title;
     const nextDescription = override.description ?? description;
     const nextPriority = override.priority ?? priority;
     const nextDueDate = override.dueDate !== undefined ? override.dueDate : dueDate;
+    const nextColorId = override.colorId !== undefined ? override.colorId : colorId;
     await onSave(activeCard.id, {
       title: nextTitle,
       description: nextDescription,
       priority: nextPriority,
       dueDate: nextDueDate,
+      colorId: nextColorId,
     });
   }
 
@@ -322,6 +334,60 @@ function CardDetailModalContent({
                 })}
               </View>
             </View>
+
+            {boardColors.length > 0 ? (
+              <View style={styles.fieldGroup}>
+                <Text style={[styles.fieldLabel, { color: colors.muted }]}>Цвет / Проект</Text>
+                <View style={styles.pillRow}>
+                  <RipplePressable
+                    onPress={() => {
+                      setColorId(null);
+                      savePatch({ colorId: null });
+                    }}
+                    style={StyleSheet.flatten([
+                      styles.pill,
+                      {
+                        backgroundColor:
+                          colorId === null ? colors.accent : colors.surfaceSubtle,
+                        borderColor: colorId === null ? colors.accent : colors.line,
+                      },
+                    ])}>
+                    <Text
+                      style={[
+                        styles.pillText,
+                        { color: colorId === null ? colors.accentText : colors.muted },
+                      ]}>
+                      Без цвета
+                    </Text>
+                  </RipplePressable>
+                  {boardColors.map((item) => {
+                    const selected = colorId === item.id;
+                    return (
+                      <RipplePressable
+                        key={item.id}
+                        onPress={() => {
+                          setColorId(item.id);
+                          savePatch({ colorId: item.id });
+                        }}
+                        style={StyleSheet.flatten([
+                          styles.pill,
+                          {
+                            backgroundColor: selected
+                              ? hexWithAlpha(item.color, 0.24)
+                              : colors.surfaceSubtle,
+                            borderColor: selected ? item.color : colors.line,
+                          },
+                        ])}>
+                        <View style={[styles.dot, { backgroundColor: item.color }]} />
+                        <Text style={[styles.pillText, { color: colors.text }]}>
+                          {getBoardColorDisplayName(item)}
+                        </Text>
+                      </RipplePressable>
+                    );
+                  })}
+                </View>
+              </View>
+            ) : null}
 
             <View style={styles.fieldGroup}>
               <Text style={[styles.fieldLabel, { color: colors.muted }]}>Приоритет</Text>

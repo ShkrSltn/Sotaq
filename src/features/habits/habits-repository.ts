@@ -7,8 +7,9 @@ import type {
   HabitRecord,
   HabitsSnapshot,
   HabitWithStats,
+  HabitYearStats,
 } from '@/features/habits/types';
-import { toDateKey } from '@/features/kanban/types';
+import { daysInMonth, toDateKey } from '@/utils/date-key';
 
 type HabitRow = {
   id: string;
@@ -96,6 +97,69 @@ export function computeHabitStreaks(
   }
 
   return { currentStreak, bestStreak };
+}
+
+export function computeYearStats(
+  habits: HabitWithStats[],
+  year: number,
+  selectedHabitId: string | 'all',
+  today: Date = new Date(),
+): HabitYearStats {
+  let totalDaysInYear = 0;
+  for (let m = 0; m < 12; m += 1) {
+    totalDaysInYear += daysInMonth(year, m);
+  }
+
+  const yearPrefix = `${year}-`;
+
+  if (selectedHabitId !== 'all') {
+    const habit = habits.find((h) => h.id === selectedHabitId);
+    if (!habit) {
+      return {
+        markedDays: 0,
+        totalDaysInYear,
+        yearPercent: 0,
+        currentStreak: 0,
+        bestStreak: 0,
+      };
+    }
+    let markedDays = 0;
+    habit.completedDates.forEach((key) => {
+      if (key.startsWith(yearPrefix)) {
+        markedDays += 1;
+      }
+    });
+    return {
+      markedDays,
+      totalDaysInYear,
+      yearPercent: Math.round((markedDays / totalDaysInYear) * 100),
+      currentStreak: habit.currentStreak,
+      bestStreak: habit.bestStreak,
+    };
+  }
+
+  // Aggregate mode ('all'): a day counts if at least 1 habit was completed on that date
+  const anyDoneDates = new Set<string>();
+  let markedDays = 0;
+  for (const h of habits) {
+    h.completedDates.forEach((key) => {
+      if (!anyDoneDates.has(key)) {
+        anyDoneDates.add(key);
+        if (key.startsWith(yearPrefix)) {
+          markedDays += 1;
+        }
+      }
+    });
+  }
+
+  const { currentStreak, bestStreak } = computeHabitStreaks(anyDoneDates, today);
+  return {
+    markedDays,
+    totalDaysInYear,
+    yearPercent: Math.round((markedDays / totalDaysInYear) * 100),
+    currentStreak,
+    bestStreak,
+  };
 }
 
 export async function listHabitsWithStats(
@@ -270,6 +334,40 @@ export async function toggleHabitLog(
     nowIso(),
   );
   return true;
+}
+
+export async function setAllHabitsForDate(
+  db: SQLiteDatabase,
+  userId: string,
+  habitIds: string[],
+  dateKey: string,
+  done: boolean,
+): Promise<void> {
+  if (habitIds.length === 0) {
+    return;
+  }
+  const now = nowIso();
+  await db.withTransactionAsync(async () => {
+    for (const habitId of habitIds) {
+      if (done) {
+        await db.runAsync(
+          `INSERT OR IGNORE INTO habit_logs (id, habit_id, user_id, date_key, created_at)
+           VALUES (?, ?, ?, ?, ?);`,
+          createId(),
+          habitId,
+          userId,
+          dateKey,
+          now,
+        );
+      } else {
+        await db.runAsync(
+          'DELETE FROM habit_logs WHERE habit_id = ? AND date_key = ?;',
+          habitId,
+          dateKey,
+        );
+      }
+    }
+  });
 }
 
 export async function captureHabitsSnapshot(

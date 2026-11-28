@@ -1,48 +1,55 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Modal,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
+import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/app-icon';
-import { DragTrashZone } from '@/components/drag-trash-zone';
 import { RipplePressable } from '@/components/ripple-pressable';
 import { HistoryToast, UndoRedoButtons } from '@/components/undo-redo-bar';
-import type { WebDomDragEvent } from '@/components/web-drag-box';
 import { useDatabase } from '@/db/provider';
 import { useAuth } from '@/features/auth/auth-context';
 import { HabitDialog } from '@/features/habits/components/habit-dialog';
-import {
-  HABIT_DRAG_MIME,
-  HabitDesktopRow,
-  HabitMobileCard,
-} from '@/features/habits/components/habit-item';
+import { HabitTodayList } from '@/features/habits/components/habit-today-list';
+import { VoronoiMonth } from '@/features/habits/components/voronoi-month';
+import { VoronoiYearMap } from '@/features/habits/components/voronoi-year-map';
 import {
   captureHabitsSnapshot,
+  computeYearStats,
   createHabit,
   deleteHabit,
   listHabitsWithStats,
   reorderHabits,
   restoreHabitsSnapshot,
+  setAllHabitsForDate,
   toggleHabitLog,
   updateHabit,
 } from '@/features/habits/habits-repository';
 import {
-  buildHabitDays,
   HABIT_COLORS,
   type HabitRecord,
   type HabitsSnapshot,
   type HabitWithStats,
+  MONTH_NAMES_RU,
 } from '@/features/habits/types';
 import { useUndoRedoHotkeys } from '@/hooks/use-undo-redo';
 import { useThemeColors, useViewport } from '@/theme/colors';
+import { daysInMonth, formatDateKeyRu, todayKey } from '@/utils/date-key';
 
 const MAX_HISTORY = 40;
+type HabitsViewMode = 'month' | 'year';
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
 
 export function HabitsWorkspace() {
   const db = useDatabase();
@@ -50,26 +57,27 @@ export function HabitsWorkspace() {
   const userId = user?.id ?? '';
   const colors = useThemeColors();
   const { isDesktop } = useViewport();
+  const insets = useSafeAreaInsets();
 
   const [habits, setHabits] = useState<HabitWithStats[]>([]);
   const [loading, setLoading] = useState(true);
-  const [daysCount, setDaysCount] = useState<7 | 14>(7);
-  const [weekOffset, setWeekOffset] = useState(0);
-  const [onlyRemainingToday, setOnlyRemainingToday] = useState(false);
-  const [quickTitle, setQuickTitle] = useState('');
+  const [viewMode, setViewMode] = useState<HabitsViewMode>('month');
+  const [year, setYear] = useState(() => new Date().getFullYear());
+  const [monthIndex, setMonthIndex] = useState(() => new Date().getMonth());
+  const [selectedHabitId, setSelectedHabitId] = useState<string | 'all'>('all');
+  const [dayModalDateKey, setDayModalDateKey] = useState<string | null>(null);
+  const [mobileMonthWidth, setMobileMonthWidth] = useState(340);
+  const [monthHoverInfo, setMonthHoverInfo] = useState<{
+    dateKey: string;
+    doneCount: number;
+    totalCount: number;
+  } | null>(null);
 
   const [dialog, setDialog] = useState<{
     open: boolean;
     mode: 'create' | 'edit';
     habit: HabitWithStats | null;
   }>({ open: false, mode: 'create', habit: null });
-
-  // Drag-and-drop state (Desktop Web)
-  const [draggingHabitId, setDraggingHabitId] = useState<string | null>(null);
-  const [dropTarget, setDropTarget] = useState<{
-    id: string;
-    position: 'before' | 'after';
-  } | null>(null);
 
   // Undo / Redo
   const pastRef = useRef<HabitsSnapshot[]>([]);
@@ -78,6 +86,8 @@ export function HabitsWorkspace() {
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const historyBusyRef = useRef(false);
+
+  const currentTodayKey = todayKey();
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -181,8 +191,36 @@ export function HabitsWorkspace() {
     }
   }, [db, userId, refresh, syncHistoryMeta, showToast]);
 
+  const stepPeriod = useCallback(
+    (delta: -1 | 1) => {
+      if (viewMode === 'year') {
+        setYear((y) => y + delta);
+        return;
+      }
+      setMonthIndex((prevMonth) => {
+        const next = prevMonth + delta;
+        if (next < 0) {
+          setYear((y) => y - 1);
+          return 11;
+        }
+        if (next > 11) {
+          setYear((y) => y + 1);
+          return 0;
+        }
+        return next;
+      });
+    },
+    [viewMode],
+  );
+
+  const jumpToCurrentPeriod = useCallback(() => {
+    const now = new Date();
+    setYear(now.getFullYear());
+    setMonthIndex(now.getMonth());
+  }, []);
+
   useUndoRedoHotkeys({
-    enabled: !dialog.open,
+    enabled: !dialog.open && dayModalDateKey === null,
     ignoreInsideInputs: true,
     onUndo: () => {
       handleUndo();
@@ -192,70 +230,103 @@ export function HabitsWorkspace() {
     },
   });
 
-  // Web keyboard shortcuts: Left/Right week, T = current week
+  // Web keyboard shortcuts: Left/Right period, T = today, M = month, Y = year
   useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined' || dialog.open) {
+    if (
+      Platform.OS !== 'web' ||
+      typeof window === 'undefined' ||
+      dialog.open ||
+      dayModalDateKey !== null
+    ) {
       return;
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey) {
-        return;
-      }
       const target = event.target as HTMLElement | null;
       if (
         target &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.isContentEditable)
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
       ) {
         return;
       }
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+      const key = event.key.toLowerCase();
       if (event.key === 'ArrowLeft') {
         event.preventDefault();
-        setWeekOffset((v) => v - 1);
+        stepPeriod(-1);
       } else if (event.key === 'ArrowRight') {
         event.preventDefault();
-        setWeekOffset((v) => Math.min(0, v + 1));
-      } else if (event.code === 'KeyT') {
+        stepPeriod(1);
+      } else if (key === 't') {
         event.preventDefault();
-        setWeekOffset(0);
+        jumpToCurrentPeriod();
+      } else if (key === 'm') {
+        event.preventDefault();
+        setViewMode('month');
+      } else if (key === 'y') {
+        event.preventDefault();
+        setViewMode('year');
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [dialog.open]);
+  }, [dialog.open, dayModalDateKey, stepPeriod, jumpToCurrentPeriod]);
 
-  const resolvedDaysCount: 7 | 14 = isDesktop ? daysCount : 7;
-  const { days, rangeLabel } = useMemo(
-    () => buildHabitDays(resolvedDaysCount, weekOffset),
-    [resolvedDaysCount, weekOffset],
+  const activeSelectedHabitId = useMemo(() => {
+    if (selectedHabitId === 'all') return 'all';
+    return habits.some((h) => h.id === selectedHabitId) ? selectedHabitId : 'all';
+  }, [habits, selectedHabitId]);
+
+  const selectedHabit = useMemo(
+    () =>
+      activeSelectedHabitId === 'all'
+        ? null
+        : habits.find((h) => h.id === activeSelectedHabitId) ?? null,
+    [habits, activeSelectedHabitId],
   );
 
-  const summary = useMemo(() => {
-    const total = habits.length;
-    const doneToday = habits.filter((h) => h.completedToday).length;
-    const remainingToday = Math.max(0, total - doneToday);
-    const todayPct = total > 0 ? Math.round((doneToday / total) * 100) : 0;
-    const topStreak = habits.reduce((max, h) => Math.max(max, h.currentStreak), 0);
+  const yearStats = useMemo(
+    () => computeYearStats(habits, year, activeSelectedHabitId),
+    [habits, year, activeSelectedHabitId],
+  );
 
-    const periodMultiplier = resolvedDaysCount === 14 ? 2 : 1;
-    let totalGoal = 0;
-    let totalAchieved = 0;
-    for (const h of habits) {
-      const target = h.targetPerWeek * periodMultiplier;
-      const done = days.reduce((acc, d) => acc + (h.completedDates.has(d.dateKey) ? 1 : 0), 0);
-      totalGoal += target;
-      totalAchieved += Math.min(done, target);
+  // Compute active month breakdown
+  const monthBreakdown = useMemo(() => {
+    const totalDays = daysInMonth(year, monthIndex);
+    const prefix = `${year}-${pad2(monthIndex + 1)}-`;
+
+    let activeDays = 0;
+    for (let d = 1; d <= totalDays; d += 1) {
+      const key = `${prefix}${pad2(d)}`;
+      if (selectedHabit) {
+        if (selectedHabit.completedDates.has(key)) activeDays += 1;
+      } else if (habits.some((h) => h.completedDates.has(key))) {
+        activeDays += 1;
+      }
     }
-    const periodPct = totalGoal > 0 ? Math.round((totalAchieved / totalGoal) * 100) : 0;
 
-    return { total, doneToday, remainingToday, todayPct, topStreak, periodPct };
-  }, [habits, days, resolvedDaysCount]);
+    const perHabit = habits.map((h) => {
+      let count = 0;
+      for (let d = 1; d <= totalDays; d += 1) {
+        if (h.completedDates.has(`${prefix}${pad2(d)}`)) {
+          count += 1;
+        }
+      }
+      return {
+        habit: h,
+        count,
+        pct: Math.round((count / totalDays) * 100),
+      };
+    });
 
-  const visibleHabits = useMemo(
-    () => (onlyRemainingToday ? habits.filter((h) => !h.completedToday) : habits),
-    [habits, onlyRemainingToday],
-  );
+    return {
+      totalDays,
+      activeDays,
+      monthPct: Math.round((activeDays / totalDays) * 100),
+      perHabit,
+    };
+  }, [habits, year, monthIndex, selectedHabit]);
 
   async function handleToggleCell(habitId: string, dateKey: string) {
     if (!userId) {
@@ -266,16 +337,47 @@ export function HabitsWorkspace() {
     await refresh();
   }
 
-  async function handleQuickCreate() {
-    const clean = quickTitle.trim();
-    if (!clean || !userId) {
+  async function handleSetAllForDay(dateKey: string, markDone: boolean) {
+    if (!userId || habits.length === 0) {
       return;
     }
     await pushSnapshot();
-    const color = HABIT_COLORS[habits.length % HABIT_COLORS.length];
-    await createHabit(db, userId, { title: clean, color, icon: 'flame', targetPerWeek: 7 });
-    setQuickTitle('');
+    await setAllHabitsForDate(
+      db,
+      userId,
+      habits.map((h) => h.id),
+      dateKey,
+      markDone,
+    );
     await refresh();
+  }
+
+  async function handleMoveHabitOrder(habitId: string, delta: -1 | 1) {
+    if (!userId) {
+      return;
+    }
+    const idx = habits.findIndex((h) => h.id === habitId);
+    const targetIdx = idx + delta;
+    if (idx < 0 || targetIdx < 0 || targetIdx >= habits.length) {
+      return;
+    }
+    await pushSnapshot();
+    const ids = habits.map((h) => h.id);
+    const tmp = ids[idx];
+    ids[idx] = ids[targetIdx];
+    ids[targetIdx] = tmp;
+    await reorderHabits(db, userId, ids);
+    await refresh();
+  }
+
+  function handlePressMapDay(dateKey: string) {
+    if (selectedHabit) {
+      handleToggleCell(selectedHabit.id, dateKey);
+    } else if (habits.length === 1) {
+      handleToggleCell(habits[0].id, dateKey);
+    } else if (habits.length > 1) {
+      setDayModalDateKey(dateKey);
+    }
   }
 
   async function handleDialogSave(input: {
@@ -288,70 +390,22 @@ export function HabitsWorkspace() {
       return;
     }
     await pushSnapshot();
-    if (dialog.mode === 'edit' && dialog.habit) {
+    if (dialog.mode === 'create') {
+      const created = await createHabit(db, userId, input);
+      setSelectedHabitId(created.id);
+    } else if (dialog.habit) {
       await updateHabit(db, dialog.habit.id, input);
-    } else {
-      await createHabit(db, userId, input);
     }
     await refresh();
   }
 
   async function handleDeleteHabit(habitId: string) {
-    if (!userId) {
-      return;
-    }
     await pushSnapshot();
     await deleteHabit(db, habitId);
+    if (selectedHabitId === habitId) {
+      setSelectedHabitId('all');
+    }
     await refresh();
-    showToast('Привычка удалена');
-  }
-
-  async function handleMoveByOffset(habitId: string, delta: -1 | 1) {
-    if (!userId) {
-      return;
-    }
-    const ids = habits.map((h) => h.id);
-    const idx = ids.indexOf(habitId);
-    const nextIdx = idx + delta;
-    if (idx < 0 || nextIdx < 0 || nextIdx >= ids.length) {
-      return;
-    }
-    const next = [...ids];
-    const [moved] = next.splice(idx, 1);
-    next.splice(nextIdx, 0, moved);
-    await pushSnapshot();
-    await reorderHabits(db, userId, next);
-    await refresh();
-  }
-
-  async function handleDropHabit(
-    draggedId: string,
-    targetId: string,
-    position: 'before' | 'after',
-  ) {
-    setDraggingHabitId(null);
-    setDropTarget(null);
-    if (!userId || !draggedId || draggedId === targetId) {
-      return;
-    }
-    const ids = habits.map((h) => h.id).filter((id) => id !== draggedId);
-    const targetIdx = ids.indexOf(targetId);
-    if (targetIdx < 0) {
-      return;
-    }
-    ids.splice(position === 'before' ? targetIdx : targetIdx + 1, 0, draggedId);
-    await pushSnapshot();
-    await reorderHabits(db, userId, ids);
-    await refresh();
-  }
-
-  async function handleDropTrash(event: WebDomDragEvent) {
-    const id = event.dataTransfer?.getData(HABIT_DRAG_MIME) || draggingHabitId;
-    setDraggingHabitId(null);
-    setDropTarget(null);
-    if (id && habits.some((h) => h.id === id)) {
-      await handleDeleteHabit(id);
-    }
   }
 
   if (loading) {
@@ -362,405 +416,677 @@ export function HabitsWorkspace() {
     );
   }
 
-  const periodMultiplier = resolvedDaysCount === 14 ? 2 : 1;
+  const now = new Date();
+  const desktopMonthSize = 412;
 
   return (
-    <View style={[styles.screen, isDesktop ? styles.screenDesktop : styles.screenMobile]}>
-      {/* Clean Top Toolbar */}
-      <View style={styles.toolbar}>
+    <View style={styles.screen}>
+      {/* Top Toolbar */}
+      <View
+        style={[
+          styles.toolbar,
+          isDesktop ? styles.toolbarDesktop : styles.toolbarMobile,
+          { borderBottomColor: colors.line },
+        ]}>
         <View style={styles.toolbarLeft}>
+          {isDesktop ? (
+            <View style={styles.titleBlock}>
+              <Text style={[styles.title, { color: colors.text }]}>Привычки</Text>
+              <Text style={[styles.subtitle, { color: colors.muted }]}>
+                Карта ритма по дням
+              </Text>
+            </View>
+          ) : null}
+
+          {/* Period Navigator */}
           <View
             style={[
-              styles.navGroup,
+              styles.periodNav,
               { backgroundColor: colors.surface, borderColor: colors.line },
             ]}>
             <RipplePressable
-              accessibilityLabel="Предыдущая неделя"
-              onPress={() => setWeekOffset((v) => v - 1)}
-              style={styles.navIconBtn}>
+              accessibilityLabel={viewMode === 'month' ? 'Предыдущий месяц' : 'Предыдущий год'}
+              onPress={() => stepPeriod(-1)}
+              style={styles.periodArrowBtn}>
               <AppIcon name="chevronLeft" size="xs" color={colors.muted} />
             </RipplePressable>
 
-            <RipplePressable onPress={() => setWeekOffset(0)} style={styles.rangeBtn}>
-              <Text style={[styles.rangeText, { color: colors.text }]} numberOfLines={1}>
-                {rangeLabel}
+            <RipplePressable
+              accessibilityLabel="Вернуться к текущему периоду"
+              onPress={jumpToCurrentPeriod}
+              style={styles.periodLabelBtn}>
+              <Text style={[styles.periodLabelText, { color: colors.text }]} numberOfLines={1}>
+                {viewMode === 'month' ? `${MONTH_NAMES_RU[monthIndex]} ${year}` : `${year}`}
               </Text>
             </RipplePressable>
 
             <RipplePressable
-              accessibilityLabel="Следующая неделя"
-              disabled={weekOffset >= 0}
-              onPress={() => setWeekOffset((v) => Math.min(0, v + 1))}
-              style={StyleSheet.flatten([
-                styles.navIconBtn,
-                weekOffset >= 0 ? styles.disabled : null,
-              ])}>
+              accessibilityLabel={viewMode === 'month' ? 'Следующий месяц' : 'Следующий год'}
+              onPress={() => stepPeriod(1)}
+              style={styles.periodArrowBtn}>
               <AppIcon name="chevronRight" size="xs" color={colors.muted} />
             </RipplePressable>
           </View>
 
-          {weekOffset !== 0 ? (
-            <RipplePressable
-              onPress={() => setWeekOffset(0)}
-              style={StyleSheet.flatten([
-                styles.todayBtn,
-                { backgroundColor: colors.surface, borderColor: colors.line },
-              ])}>
-              <Text style={[styles.todayBtnText, { color: colors.text }]}>Сегодня</Text>
-            </RipplePressable>
-          ) : null}
+          {/* View Mode Switcher: Month (default) | Year */}
+          <View
+            style={[
+              styles.modeSwitch,
+              { backgroundColor: colors.surface, borderColor: colors.line },
+            ]}>
+            {(
+              [
+                { key: 'month', label: 'Месяц' },
+                { key: 'year', label: 'Год' },
+              ] as const
+            ).map((item) => {
+              const active = viewMode === item.key;
+              return (
+                <RipplePressable
+                  key={item.key}
+                  onPress={() => setViewMode(item.key)}
+                  style={StyleSheet.flatten([
+                    styles.modeSwitchBtn,
+                    active ? { backgroundColor: colors.surfaceActive } : null,
+                  ])}>
+                  <Text
+                    style={[
+                      styles.modeSwitchText,
+                      { color: active ? colors.text : colors.muted },
+                    ]}>
+                    {item.label}
+                  </Text>
+                </RipplePressable>
+              );
+            })}
+          </View>
         </View>
 
         <View style={styles.toolbarRight}>
-          {isDesktop ? (
-            <>
-              <View
-                style={[
-                  styles.segmented,
-                  { backgroundColor: colors.surface, borderColor: colors.line },
-                ]}>
-                {([7, 14] as const).map((cnt) => {
-                  const active = daysCount === cnt;
-                  return (
-                    <RipplePressable
-                      key={cnt}
-                      onPress={() => setDaysCount(cnt)}
-                      style={StyleSheet.flatten([
-                        styles.segBtn,
-                        active ? { backgroundColor: colors.surfaceActive } : null,
-                      ])}>
-                      <Text
-                        style={[
-                          styles.segText,
-                          { color: active ? colors.text : colors.muted },
-                        ]}>
-                        {cnt === 7 ? 'Неделя' : '14 дней'}
-                      </Text>
-                    </RipplePressable>
-                  );
-                })}
-              </View>
+          {isDesktop || historyMeta.canUndo || historyMeta.canRedo ? (
+            <UndoRedoButtons
+              compact={!isDesktop}
+              canUndo={historyMeta.canUndo}
+              canRedo={historyMeta.canRedo}
+              colors={colors}
+              onUndo={() => {
+                handleUndo();
+              }}
+              onRedo={() => {
+                handleRedo();
+              }}
+            />
+          ) : null}
 
-              <View style={[styles.divider, { backgroundColor: colors.line }]} />
-
-              <UndoRedoButtons
-                canUndo={historyMeta.canUndo}
-                canRedo={historyMeta.canRedo}
-                colors={colors}
-                onUndo={() => {
-                  handleUndo();
-                }}
-                onRedo={() => {
-                  handleRedo();
-                }}
-              />
-
-              <View style={[styles.divider, { backgroundColor: colors.line }]} />
-
-              <RipplePressable
-                onPress={() => setDialog({ open: true, mode: 'create', habit: null })}
-                style={StyleSheet.flatten([
-                  styles.primaryBtn,
-                  { backgroundColor: colors.accent },
-                ])}>
-                <AppIcon name="plus" size="xs" color={colors.accentText} />
-                <Text style={[styles.primaryBtnText, { color: colors.accentText }]}>Привычка</Text>
-              </RipplePressable>
-            </>
-          ) : (
-            <>
-              {historyMeta.canUndo || historyMeta.canRedo ? (
-                <UndoRedoButtons
-                  compact
-                  canUndo={historyMeta.canUndo}
-                  canRedo={historyMeta.canRedo}
-                  colors={colors}
-                  onUndo={() => {
-                    handleUndo();
-                  }}
-                  onRedo={() => {
-                    handleRedo();
-                  }}
-                />
-              ) : null}
-              <RipplePressable
-                accessibilityLabel="Новая привычка"
-                onPress={() => setDialog({ open: true, mode: 'create', habit: null })}
-                style={StyleSheet.flatten([
-                  styles.iconPill,
-                  { backgroundColor: colors.accent, borderColor: colors.accent },
-                ])}>
-                <AppIcon name="plus" size="sm" color={colors.accentText} />
-              </RipplePressable>
-            </>
-          )}
+          <RipplePressable
+            accessibilityLabel="Новая привычка"
+            onPress={() => setDialog({ open: true, mode: 'create', habit: null })}
+            style={StyleSheet.flatten([
+              isDesktop ? styles.addBtnDesktop : styles.addBtnMobile,
+              { backgroundColor: colors.accent },
+            ])}>
+            <AppIcon name="plus" size="xs" color={colors.accentText} />
+            {isDesktop ? (
+              <Text style={[styles.addBtnText, { color: colors.accentText }]}>Привычка</Text>
+            ) : null}
+          </RipplePressable>
         </View>
       </View>
 
-      {/* Main Content */}
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled">
+        contentContainerStyle={[
+          styles.content,
+          isDesktop ? styles.contentDesktop : styles.contentMobile,
+        ]}>
         <View style={styles.inner}>
-          {/* Compact Momentum Summary Bar */}
-          {summary.total > 0 ? (
-            <View
-              style={[
-                styles.summaryCard,
-                { backgroundColor: colors.surface, borderColor: colors.line },
-              ]}>
-              <View style={styles.summaryTopRow}>
-                <View style={styles.summaryMetrics}>
-                  <View style={styles.summaryTodayGroup}>
-                    <Text
-                      style={[
-                        styles.summaryPrimary,
-                        {
-                          color:
-                            summary.remainingToday === 0 ? colors.success : colors.text,
-                        },
-                      ]}>
-                      {summary.remainingToday === 0
-                        ? `Все выполнены (${summary.total}/${summary.total})`
-                        : `Сегодня ${summary.doneToday} из ${summary.total}`}
-                    </Text>
-                    <View style={styles.summarySecondaryRow}>
-                      <View style={styles.metricPill}>
-                        <AppIcon
-                          name="flame"
-                          size={11}
-                          color={summary.topStreak > 0 ? colors.warning : colors.muted}
-                        />
-                        <Text style={[styles.metricText, { color: colors.muted }]}>
-                          Серия: {summary.topStreak}д
-                        </Text>
-                      </View>
-                      <Text style={[styles.metricDot, { color: colors.muted }]}>·</Text>
-                      <Text style={[styles.metricText, { color: colors.muted }]}>
-                        Период: {summary.periodPct}%
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-
-                {summary.remainingToday > 0 || onlyRemainingToday ? (
-                  <RipplePressable
-                    onPress={() => setOnlyRemainingToday((v) => !v)}
-                    style={StyleSheet.flatten([
-                      styles.remainingChip,
-                      {
-                        backgroundColor: onlyRemainingToday
-                          ? colors.surfaceActive
-                          : colors.surfaceSubtle,
-                        borderColor: onlyRemainingToday ? colors.text : colors.line,
-                      },
-                    ])}>
-                    <Text
-                      style={[
-                        styles.remainingChipText,
-                        { color: onlyRemainingToday ? colors.text : colors.muted },
-                      ]}>
-                      {onlyRemainingToday
-                        ? 'Показать все'
-                        : `Осталось (${summary.remainingToday})`}
-                    </Text>
-                  </RipplePressable>
-                ) : null}
-              </View>
-
-              <View style={[styles.summaryBarTrack, { backgroundColor: colors.surfaceSubtle }]}>
-                <View
-                  style={[
-                    styles.summaryBarFill,
-                    {
-                      width: `${summary.todayPct}%`,
-                      backgroundColor:
-                        summary.remainingToday === 0 ? colors.success : colors.accent,
-                    },
-                  ]}
-                />
-              </View>
-            </View>
-          ) : null}
-
-          {/* Empty State / Habit List */}
           {habits.length === 0 ? (
             <View
               style={[
                 styles.emptyCard,
                 { backgroundColor: colors.surface, borderColor: colors.line },
               ]}>
-              <View style={[styles.emptyIcon, { backgroundColor: colors.surfaceSubtle }]}>
+              <View style={[styles.emptyIconBox, { backgroundColor: colors.surfaceSubtle }]}>
                 <AppIcon name="flame" size="lg" color={colors.muted} />
               </View>
-              <Text style={[styles.emptyTitle, { color: colors.text }]}>Привычек пока нет</Text>
-              <Text style={[styles.emptySub, { color: colors.muted }]}>
-                Добавьте первую привычку ниже — на телефоне и десктопе её можно отмечать в одно
-                касание и следить за серией.
-              </Text>
-            </View>
-          ) : visibleHabits.length === 0 ? (
-            <View
-              style={[
-                styles.emptyCard,
-                { backgroundColor: colors.surface, borderColor: colors.line },
-              ]}>
-              <AppIcon name="checkCircle" size="lg" color={colors.success} />
               <Text style={[styles.emptyTitle, { color: colors.text }]}>
-                На сегодня всё выполнено!
+                Пока нет ни одной привычки
+              </Text>
+              <Text style={[styles.emptyDesc, { color: colors.muted }]}>
+                Создай первую привычку — каждый выполненный день зажжёт ячейку на карте Вороного.
               </Text>
               <RipplePressable
-                onPress={() => setOnlyRemainingToday(false)}
+                onPress={() => setDialog({ open: true, mode: 'create', habit: null })}
                 style={StyleSheet.flatten([
-                  styles.showAllBtn,
-                  { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
+                  styles.emptyCta,
+                  { backgroundColor: colors.accent },
                 ])}>
-                <Text style={[styles.showAllText, { color: colors.text }]}>Показать все</Text>
+                <AppIcon name="plus" size="xs" color={colors.accentText} />
+                <Text style={[styles.emptyCtaText, { color: colors.accentText }]}>
+                  Создать привычку
+                </Text>
               </RipplePressable>
             </View>
-          ) : isDesktop ? (
-            <View
-              style={[
-                styles.gridCard,
-                { backgroundColor: colors.surface, borderColor: colors.line },
-              ]}>
-              {/* Desktop Column Headers */}
-              <View style={[styles.gridHeader, { borderBottomColor: colors.line }]}>
-                <View style={styles.desktopHeaderNameCol}>
-                  <Text style={[styles.colCaption, { color: colors.muted }]}>Привычка</Text>
-                </View>
+          ) : (
+            <>
+              {/* Habit Filter Pills */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.pillsRow}>
+                <RipplePressable
+                  onPress={() => setSelectedHabitId('all')}
+                  style={StyleSheet.flatten([
+                    styles.habitPill,
+                    {
+                      backgroundColor:
+                        activeSelectedHabitId === 'all' ? colors.accent : colors.surface,
+                      borderColor:
+                        activeSelectedHabitId === 'all' ? colors.accent : colors.line,
+                    },
+                  ])}>
+                  <Text
+                    style={[
+                      styles.habitPillText,
+                      {
+                        color:
+                          activeSelectedHabitId === 'all' ? colors.accentText : colors.text,
+                      },
+                    ]}>
+                    Все ({habits.length})
+                  </Text>
+                </RipplePressable>
 
-                <View style={styles.daysRow}>
-                  {days.map((day) => (
-                    <View key={day.dateKey} style={styles.dayHeaderCell}>
-                      <Text
-                        style={[
-                          styles.weekdayText,
-                          { color: day.isToday ? colors.text : colors.muted },
-                        ]}>
-                        {day.weekdayLabel}
-                      </Text>
-                      <View
-                        style={[
-                          styles.dayNumBadge,
-                          day.isToday ? { backgroundColor: colors.accent } : null,
-                        ]}>
+                {habits.map((habit) => {
+                  const active = activeSelectedHabitId === habit.id;
+                  return (
+                    <View key={habit.id} style={styles.habitPillWrap}>
+                      <RipplePressable
+                        onPress={() => setSelectedHabitId(habit.id)}
+                        style={StyleSheet.flatten([
+                          styles.habitPill,
+                          {
+                            backgroundColor: active ? `${habit.color}22` : colors.surface,
+                            borderColor: active ? habit.color : colors.line,
+                          },
+                        ])}>
+                        <View style={[styles.habitDot, { backgroundColor: habit.color }]} />
                         <Text
+                          style={[styles.habitPillText, { color: colors.text }]}
+                          numberOfLines={1}>
+                          {habit.title}
+                        </Text>
+                        {habit.currentStreak > 0 ? (
+                          <Text style={[styles.pillStreak, { color: colors.muted }]}>
+                            {habit.currentStreak}
+                          </Text>
+                        ) : null}
+                      </RipplePressable>
+
+                      {active ? (
+                        <RipplePressable
+                          accessibilityLabel={`Редактировать ${habit.title}`}
+                          onPress={() => setDialog({ open: true, mode: 'edit', habit })}
+                          style={StyleSheet.flatten([
+                            styles.pillEditBtn,
+                            { backgroundColor: colors.surface, borderColor: colors.line },
+                          ])}>
+                          <AppIcon name="edit" size={11} color={colors.muted} />
+                        </RipplePressable>
+                      ) : null}
+                    </View>
+                  );
+                })}
+              </ScrollView>
+
+              {/* Today Quick Checklist */}
+              <HabitTodayList
+                habits={habits}
+                todayKey={currentTodayKey}
+                isDesktop={isDesktop}
+                colors={colors}
+                onToggleToday={handleToggleCell}
+                onEditHabit={(habit) => setDialog({ open: true, mode: 'edit', habit })}
+              />
+
+              {/* Main View: Default Active Month OR Full 12-Month Year Poster */}
+              {viewMode === 'month' ? (
+                isDesktop ? (
+                  <View style={styles.monthHeroRow}>
+                    <VoronoiMonth
+                      year={year}
+                      monthIndex={monthIndex}
+                      size={desktopMonthSize}
+                      todayKey={currentTodayKey}
+                      currentMonthIndex={now.getMonth()}
+                      currentYear={now.getFullYear()}
+                      habits={habits}
+                      selectedHabit={selectedHabit}
+                      colors={colors}
+                      large
+                      onPressDay={handlePressMapDay}
+                      onHoverDayChange={setMonthHoverInfo}
+                    />
+
+                    <View
+                      style={[
+                        styles.monthSideCard,
+                        { backgroundColor: colors.surface, borderColor: colors.line },
+                      ]}>
+                      <View style={styles.monthSideTop}>
+                        <View style={styles.monthSideHeader}>
+                          <View>
+                            <Text style={[styles.monthSideTitle, { color: colors.text }]}>
+                              {MONTH_NAMES_RU[monthIndex]} {year}
+                            </Text>
+                            <Text style={[styles.monthSideSub, { color: colors.muted }]}>
+                              {monthHoverInfo
+                                ? `${formatDateKeyRu(monthHoverInfo.dateKey)} · ${
+                                    selectedHabit
+                                      ? monthHoverInfo.doneCount > 0
+                                        ? 'Выполнено ✓'
+                                        : 'Не отмечено'
+                                      : `Выполнено ${monthHoverInfo.doneCount} из ${monthHoverInfo.totalCount}`
+                                  }`
+                                : selectedHabit
+                                  ? `Клик по ячейке отмечает «${selectedHabit.title}»`
+                                  : 'Наведи или нажми на любую ячейку дня'}
+                            </Text>
+                          </View>
+
+                          <RipplePressable
+                            onPress={() => setViewMode('year')}
+                            style={StyleSheet.flatten([
+                              styles.toYearBtn,
+                              { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
+                            ])}>
+                            <Text style={[styles.toYearBtnText, { color: colors.text }]}>
+                              Весь {year}
+                            </Text>
+                            <AppIcon name="arrowRight" size={11} color={colors.muted} />
+                          </RipplePressable>
+                        </View>
+
+                        {/* Month KPI Tiles */}
+                        <View style={styles.footerStatsRow}>
+                          <View
+                            style={[
+                              styles.footerStatTile,
+                              { backgroundColor: colors.surfaceSubtle },
+                            ]}>
+                            <Text style={[styles.footerStatVal, { color: colors.text }]}>
+                              {monthBreakdown.activeDays}/{monthBreakdown.totalDays}
+                            </Text>
+                            <Text style={[styles.footerStatLbl, { color: colors.muted }]}>
+                              дней ({monthBreakdown.monthPct}%)
+                            </Text>
+                          </View>
+
+                          <View
+                            style={[
+                              styles.footerStatTile,
+                              { backgroundColor: colors.surfaceSubtle },
+                            ]}>
+                            <Text style={[styles.footerStatVal, { color: colors.warning }]}>
+                              {yearStats.currentStreak} дн.
+                            </Text>
+                            <Text style={[styles.footerStatLbl, { color: colors.muted }]}>
+                              текущая серия
+                            </Text>
+                          </View>
+
+                          <View
+                            style={[
+                              styles.footerStatTile,
+                              { backgroundColor: colors.surfaceSubtle },
+                            ]}>
+                            <Text style={[styles.footerStatVal, { color: colors.success }]}>
+                              {yearStats.bestStreak} дн.
+                            </Text>
+                            <Text style={[styles.footerStatLbl, { color: colors.muted }]}>
+                              лучшая серия
+                            </Text>
+                          </View>
+                        </View>
+
+                        {/* Per-habit breakdown for this month */}
+                        <View style={styles.perHabitSection}>
+                          <Text style={[styles.perHabitHeading, { color: colors.muted }]}>
+                            ПРИВЫЧКИ В ЭТОМ МЕСЯЦЕ
+                          </Text>
+                          <View style={styles.perHabitList}>
+                            {monthBreakdown.perHabit.map(({ habit, count, pct }) => {
+                              const isSelected = activeSelectedHabitId === habit.id;
+                              return (
+                                <RipplePressable
+                                  key={habit.id}
+                                  onPress={() =>
+                                    setSelectedHabitId(isSelected ? 'all' : habit.id)
+                                  }
+                                  style={StyleSheet.flatten([
+                                    styles.perHabitRow,
+                                    {
+                                      backgroundColor: isSelected
+                                        ? `${habit.color}18`
+                                        : colors.surfaceSubtle,
+                                      borderColor: isSelected ? habit.color : 'transparent',
+                                    },
+                                  ])}>
+                                  <View style={styles.perHabitRowTop}>
+                                    <View style={styles.perHabitNameWrap}>
+                                      <View
+                                        style={[
+                                          styles.habitDot,
+                                          { backgroundColor: habit.color },
+                                        ]}
+                                      />
+                                      <Text
+                                        style={[styles.perHabitName, { color: colors.text }]}
+                                        numberOfLines={1}>
+                                        {habit.title}
+                                      </Text>
+                                    </View>
+                                    <Text style={[styles.perHabitCount, { color: colors.muted }]}>
+                                      {count}/{monthBreakdown.totalDays}
+                                    </Text>
+                                  </View>
+                                  <View
+                                    style={[
+                                      styles.perHabitBarTrack,
+                                      { backgroundColor: colors.line },
+                                    ]}>
+                                    <View
+                                      style={[
+                                        styles.perHabitBarFill,
+                                        { width: `${pct}%`, backgroundColor: habit.color },
+                                      ]}
+                                    />
+                                  </View>
+                                </RipplePressable>
+                              );
+                            })}
+                          </View>
+                        </View>
+                      </View>
+                    </View>
+                  </View>
+                ) : (
+                  <View
+                    style={styles.mobileMonthStack}
+                    onLayout={(e) => {
+                      const w = Math.floor(e.nativeEvent.layout.width);
+                      if (w > 160 && Math.abs(w - mobileMonthWidth) > 2) {
+                        setMobileMonthWidth(w);
+                      }
+                    }}>
+                    <VoronoiMonth
+                      year={year}
+                      monthIndex={monthIndex}
+                      size={mobileMonthWidth}
+                      todayKey={currentTodayKey}
+                      currentMonthIndex={now.getMonth()}
+                      currentYear={now.getFullYear()}
+                      habits={habits}
+                      selectedHabit={selectedHabit}
+                      colors={colors}
+                      large
+                      onPressDay={handlePressMapDay}
+                    />
+
+                    <View
+                      style={[
+                        styles.footerCard,
+                        { backgroundColor: colors.surface, borderColor: colors.line },
+                      ]}>
+                      <View style={styles.footerStatsRow}>
+                        <View
                           style={[
-                            styles.dayNumText,
-                            { color: day.isToday ? colors.accentText : colors.muted },
+                            styles.footerStatTile,
+                            { backgroundColor: colors.surfaceSubtle },
                           ]}>
-                          {day.dayNum}
+                          <Text style={[styles.footerStatVal, { color: colors.text }]}>
+                            {monthBreakdown.activeDays}/{monthBreakdown.totalDays}
+                          </Text>
+                          <Text style={[styles.footerStatLbl, { color: colors.muted }]}>
+                            за месяц ({monthBreakdown.monthPct}%)
+                          </Text>
+                        </View>
+
+                        <View
+                          style={[
+                            styles.footerStatTile,
+                            { backgroundColor: colors.surfaceSubtle },
+                          ]}>
+                          <Text style={[styles.footerStatVal, { color: colors.warning }]}>
+                            {yearStats.currentStreak} дн.
+                          </Text>
+                          <Text style={[styles.footerStatLbl, { color: colors.muted }]}>
+                            серия
+                          </Text>
+                        </View>
+
+                        <View
+                          style={[
+                            styles.footerStatTile,
+                            { backgroundColor: colors.surfaceSubtle },
+                          ]}>
+                          <Text style={[styles.footerStatVal, { color: colors.success }]}>
+                            {yearStats.bestStreak} дн.
+                          </Text>
+                          <Text style={[styles.footerStatLbl, { color: colors.muted }]}>
+                            рекорд
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  </View>
+                )
+              ) : (
+                <>
+                  {/* Full 12-Month Voronoi Year Map */}
+                  <VoronoiYearMap
+                    year={year}
+                    todayKey={currentTodayKey}
+                    isDesktop={isDesktop}
+                    habits={habits}
+                    selectedHabit={selectedHabit}
+                    colors={colors}
+                    onPressDay={handlePressMapDay}
+                    onOpenMonthZoom={(mIdx) => {
+                      setMonthIndex(mIdx);
+                      setViewMode('month');
+                    }}
+                  />
+
+                  {/* Footer: Motto + Year Stats */}
+                  <View
+                    style={[
+                      styles.footerCard,
+                      { backgroundColor: colors.surface, borderColor: colors.line },
+                    ]}>
+                    <View style={styles.footerMottoCol}>
+                      <Text style={[styles.footerMottoTitle, { color: colors.text }]}>
+                        НЕ РАЗРЫВАЙ ЦЕПЬ · {year}
+                      </Text>
+                      <Text style={[styles.footerMottoSub, { color: colors.muted }]}>
+                        {selectedHabit
+                          ? `Привычка «${selectedHabit.title}» — тап по любой ячейке отмечает день`
+                          : 'Общая карта года — нажми на заголовок любого месяца, чтобы открыть его крупно'}
+                      </Text>
+                    </View>
+
+                    <View style={styles.footerStatsRow}>
+                      <View
+                        style={[styles.footerStatTile, { backgroundColor: colors.surfaceSubtle }]}>
+                        <Text style={[styles.footerStatVal, { color: colors.text }]}>
+                          {yearStats.markedDays}{' '}
+                          <Text style={[styles.footerStatPct, { color: colors.muted }]}>
+                            ({yearStats.yearPercent}%)
+                          </Text>
+                        </Text>
+                        <Text style={[styles.footerStatLbl, { color: colors.muted }]}>
+                          дней в {year}
+                        </Text>
+                      </View>
+
+                      <View
+                        style={[styles.footerStatTile, { backgroundColor: colors.surfaceSubtle }]}>
+                        <Text style={[styles.footerStatVal, { color: colors.warning }]}>
+                          {yearStats.currentStreak} дн.
+                        </Text>
+                        <Text style={[styles.footerStatLbl, { color: colors.muted }]}>
+                          текущая серия
+                        </Text>
+                      </View>
+
+                      <View
+                        style={[styles.footerStatTile, { backgroundColor: colors.surfaceSubtle }]}>
+                        <Text style={[styles.footerStatVal, { color: colors.success }]}>
+                          {yearStats.bestStreak} дн.
+                        </Text>
+                        <Text style={[styles.footerStatLbl, { color: colors.muted }]}>
+                          лучшая серия
                         </Text>
                       </View>
                     </View>
-                  ))}
-                </View>
-
-                <View style={styles.desktopHeaderStatsCol}>
-                  <Text style={[styles.colCaption, { color: colors.muted }]}>Серия</Text>
-                </View>
-                <View style={styles.menuSpacer} />
-              </View>
-
-              {visibleHabits.map((habit, idx) => (
-                <HabitDesktopRow
-                  key={habit.id}
-                  habit={habit}
-                  days={days}
-                  targetForPeriod={habit.targetPerWeek * periodMultiplier}
-                  colors={colors}
-                  isLast={idx === visibleHabits.length - 1}
-                  canMoveUp={idx > 0}
-                  canMoveDown={idx < visibleHabits.length - 1}
-                  isDragging={draggingHabitId === habit.id}
-                  dropPosition={dropTarget?.id === habit.id ? dropTarget.position : null}
-                  onToggleCell={handleToggleCell}
-                  onEdit={(item) => setDialog({ open: true, mode: 'edit', habit: item })}
-                  onMoveByOffset={handleMoveByOffset}
-                  onDelete={handleDeleteHabit}
-                  onDragStart={(id) => setDraggingHabitId(id)}
-                  onDragEnd={() => {
-                    setDraggingHabitId(null);
-                    setDropTarget(null);
-                  }}
-                  onDragOver={(id, pos) => {
-                    setDropTarget((prev) =>
-                      prev?.id === id && prev.position === pos ? prev : { id, position: pos },
-                    );
-                  }}
-                  onDragLeave={(id) => {
-                    setDropTarget((prev) => (prev?.id === id ? null : prev));
-                  }}
-                  onDropHabit={handleDropHabit}
-                />
-              ))}
-            </View>
-          ) : (
-            /* Mobile-First Spacious Habit Cards */
-            <View style={styles.mobileCardsList}>
-              {visibleHabits.map((habit, idx) => (
-                <HabitMobileCard
-                  key={habit.id}
-                  habit={habit}
-                  days={days}
-                  targetForPeriod={habit.targetPerWeek}
-                  colors={colors}
-                  canMoveUp={idx > 0}
-                  canMoveDown={idx < visibleHabits.length - 1}
-                  onToggleCell={handleToggleCell}
-                  onEdit={(item) => setDialog({ open: true, mode: 'edit', habit: item })}
-                  onMoveByOffset={handleMoveByOffset}
-                  onDelete={handleDeleteHabit}
-                />
-              ))}
-            </View>
+                  </View>
+                </>
+              )}
+            </>
           )}
-
-          {/* Minimalist Bottom Quick-Add Bar */}
-          <View
-            style={[
-              styles.quickAddBar,
-              { backgroundColor: colors.surface, borderColor: colors.line },
-            ]}>
-            <TextInput
-              value={quickTitle}
-              onChangeText={setQuickTitle}
-              onSubmitEditing={handleQuickCreate}
-              placeholder="Новая привычка…"
-              placeholderTextColor={colors.muted}
-              style={[styles.quickAddInput, { color: colors.text }]}
-            />
-            <RipplePressable
-              accessibilityLabel="Добавить привычку"
-              disabled={quickTitle.trim().length === 0}
-              onPress={handleQuickCreate}
-              style={StyleSheet.flatten([
-                styles.quickAddBtn,
-                { backgroundColor: colors.accent },
-                quickTitle.trim().length === 0 ? styles.disabled : null,
-              ])}>
-              <AppIcon name="plus" size="sm" color={colors.accentText} />
-            </RipplePressable>
-          </View>
         </View>
       </ScrollView>
+
+      {/* Day Picker Modal / Mobile Sheet for 'All' Mode */}
+      <Modal
+        visible={dayModalDateKey !== null}
+        transparent
+        animationType="none"
+        onRequestClose={() => setDayModalDateKey(null)}>
+        <View
+          style={[
+            styles.modalRoot,
+            isDesktop ? styles.modalRootDesktop : styles.modalRootMobile,
+          ]}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setDayModalDateKey(null)} />
+          <Animated.View
+            entering={
+              isDesktop ? FadeIn.duration(130) : SlideInDown.springify().damping(24).stiffness(260)
+            }
+            style={[
+              styles.dayModalCard,
+              isDesktop ? styles.dayModalDesktop : styles.dayModalMobile,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.line,
+                paddingBottom: isDesktop ? 4 : Math.max(insets.bottom, 14),
+              },
+            ]}>
+            <View style={[styles.dayModalHeader, { borderBottomColor: colors.line }]}>
+              <Text style={[styles.dayModalTitle, { color: colors.text }]}>
+                {dayModalDateKey ? formatDateKeyRu(dayModalDateKey) : ''}
+              </Text>
+
+              <View style={styles.dayModalHeaderRight}>
+                {dayModalDateKey && habits.length > 1 ? (
+                  <RipplePressable
+                    onPress={() => {
+                      const allMarked = habits.every((h) =>
+                        h.completedDates.has(dayModalDateKey),
+                      );
+                      handleSetAllForDay(dayModalDateKey, !allMarked);
+                    }}
+                    style={StyleSheet.flatten([
+                      styles.dayMarkAllBtn,
+                      { backgroundColor: colors.surfaceSubtle },
+                    ])}>
+                    <Text style={[styles.dayMarkAllText, { color: colors.text }]}>
+                      {habits.every((h) => h.completedDates.has(dayModalDateKey))
+                        ? 'Снять все'
+                        : 'Отметить все'}
+                    </Text>
+                  </RipplePressable>
+                ) : null}
+
+                <RipplePressable
+                  onPress={() => setDayModalDateKey(null)}
+                  style={StyleSheet.flatten([
+                    styles.dayModalClose,
+                    { backgroundColor: colors.surfaceSubtle },
+                  ])}>
+                  <AppIcon name="close" size="xs" color={colors.muted} />
+                </RipplePressable>
+              </View>
+            </View>
+
+            <View style={styles.dayModalList}>
+              {dayModalDateKey
+                ? habits.map((habit) => {
+                    const done = habit.completedDates.has(dayModalDateKey);
+                    return (
+                      <RipplePressable
+                        key={habit.id}
+                        onPress={() => handleToggleCell(habit.id, dayModalDateKey)}
+                        style={StyleSheet.flatten([
+                          styles.dayModalRow,
+                          { backgroundColor: colors.surfaceSubtle },
+                        ])}>
+                        <View
+                          style={[
+                            styles.dayModalCheck,
+                            {
+                              backgroundColor: done ? habit.color : 'transparent',
+                              borderColor: done ? habit.color : colors.muted,
+                            },
+                          ]}>
+                          {done ? (
+                            <AppIcon name="check" size={11} color="#FFFFFF" strokeWidth={2.6} />
+                          ) : null}
+                        </View>
+                        <Text
+                          style={[
+                            styles.dayModalRowTitle,
+                            { color: colors.text, opacity: done ? 0.72 : 1 },
+                          ]}
+                          numberOfLines={1}>
+                          {habit.title}
+                        </Text>
+                      </RipplePressable>
+                    );
+                  })
+                : null}
+            </View>
+          </Animated.View>
+        </View>
+      </Modal>
 
       <HabitDialog
         visible={dialog.open}
         mode={dialog.mode}
         habit={dialog.habit}
-        onClose={() => setDialog({ open: false, mode: 'create', habit: null })}
+        defaultColor={HABIT_COLORS[habits.length % HABIT_COLORS.length]}
+        canMovePrev={
+          dialog.mode === 'edit' &&
+          dialog.habit !== null &&
+          habits.findIndex((h) => h.id === dialog.habit?.id) > 0
+        }
+        canMoveNext={
+          dialog.mode === 'edit' &&
+          dialog.habit !== null &&
+          habits.findIndex((h) => h.id === dialog.habit?.id) < habits.length - 1
+        }
+        onMoveOrder={
+          dialog.habit
+            ? async (delta) => {
+                if (dialog.habit) {
+                  await handleMoveHabitOrder(dialog.habit.id, delta);
+                }
+              }
+            : undefined
+        }
+        onClose={() => setDialog((prev) => ({ ...prev, open: false }))}
         onSave={handleDialogSave}
         onDelete={handleDeleteHabit}
-      />
-
-      <DragTrashZone
-        visible={draggingHabitId !== null}
-        label="Удалить привычку"
-        colors={colors}
-        onDropDelete={handleDropTrash}
       />
 
       <HistoryToast message={toast} colors={colors} />
@@ -769,319 +1095,449 @@ export function HabitsWorkspace() {
 }
 
 const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+  },
   loadingState: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  screen: {
-    flex: 1,
-  },
-  screenDesktop: {
-    paddingHorizontal: 24,
-    paddingTop: 14,
-  },
-  screenMobile: {
-    paddingHorizontal: 12,
-    paddingTop: 10,
-  },
   toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 10,
-    minHeight: 40,
-    marginBottom: 12,
+    gap: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  toolbarDesktop: {
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+  },
+  toolbarMobile: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   toolbarLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
     flexShrink: 1,
     minWidth: 0,
   },
-  navGroup: {
+  titleBlock: {
+    gap: 1,
+    marginRight: 6,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+  },
+  subtitle: {
+    fontSize: 12,
+  },
+  periodNav: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 34,
-    borderRadius: 9,
+    borderRadius: 10,
     borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 2,
+    height: 34,
+    overflow: 'hidden',
+    flexShrink: 1,
   },
-  navIconBtn: {
+  periodArrowBtn: {
     width: 28,
-    height: 28,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  periodLabelBtn: {
+    paddingHorizontal: 8,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 1,
+  },
+  periodLabelText: {
+    fontSize: 13,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  modeSwitch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 3,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 34,
+    gap: 2,
+    flexShrink: 0,
+  },
+  modeSwitchBtn: {
+    paddingHorizontal: 10,
+    height: 26,
     borderRadius: 7,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  rangeBtn: {
-    paddingHorizontal: 8,
-    height: 28,
-    justifyContent: 'center',
-  },
-  rangeText: {
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  todayBtn: {
-    height: 34,
-    paddingHorizontal: 10,
-    borderRadius: 9,
-    borderWidth: StyleSheet.hairlineWidth,
-    justifyContent: 'center',
-  },
-  todayBtnText: {
+  modeSwitchText: {
     fontSize: 12,
     fontWeight: '600',
   },
   toolbarRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
     flexShrink: 0,
   },
-  segmented: {
+  addBtnDesktop: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 3,
+    gap: 6,
     height: 34,
-    borderRadius: 9,
-    borderWidth: StyleSheet.hairlineWidth,
-    gap: 2,
-  },
-  segBtn: {
-    height: 26,
-    paddingHorizontal: 10,
-    borderRadius: 7,
-    justifyContent: 'center',
-  },
-  segText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  divider: {
-    width: 1,
-    height: 20,
-    opacity: 0.7,
-  },
-  primaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
     paddingHorizontal: 13,
-    height: 34,
     borderRadius: 9,
   },
-  primaryBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  iconPill: {
+  addBtnMobile: {
     width: 34,
     height: 34,
     borderRadius: 9,
-    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  addBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   scroll: {
     flex: 1,
   },
-  scrollContent: {
-    flexGrow: 1,
-    alignItems: 'center',
-    paddingBottom: 64,
+  content: {
+    paddingBottom: 36,
+  },
+  contentDesktop: {
+    paddingHorizontal: 28,
+    paddingTop: 18,
+  },
+  contentMobile: {
+    paddingHorizontal: 14,
+    paddingTop: 12,
   },
   inner: {
     width: '100%',
     maxWidth: 960,
-    gap: 12,
-  },
-  summaryCard: {
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    gap: 10,
-  },
-  summaryTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    flexWrap: 'wrap',
-  },
-  summaryMetrics: {
-    flex: 1,
-    minWidth: 160,
-  },
-  summaryTodayGroup: {
-    gap: 3,
-  },
-  summaryPrimary: {
-    fontSize: 14.5,
-    fontWeight: '700',
-  },
-  summarySecondaryRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  metricPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-  },
-  metricText: {
-    fontSize: 12,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
-  },
-  metricDot: {
-    fontSize: 12,
-  },
-  remainingChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  remainingChipText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  summaryBarTrack: {
-    height: 5,
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  summaryBarFill: {
-    height: '100%',
-    borderRadius: 3,
+    alignSelf: 'center',
+    gap: 16,
   },
   emptyCard: {
     borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
-    padding: 28,
+    padding: 32,
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
+    marginTop: 20,
   },
-  emptyIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
+  emptyIconBox: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 2,
+    marginBottom: 4,
   },
   emptyTitle: {
     fontSize: 16,
     fontWeight: '700',
   },
-  emptySub: {
+  emptyDesc: {
     fontSize: 13,
     textAlign: 'center',
-    maxWidth: 360,
+    maxWidth: 340,
     lineHeight: 19,
   },
-  showAllBtn: {
-    marginTop: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 9,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  showAllText: {
-    fontSize: 12.5,
-    fontWeight: '600',
-  },
-  gridCard: {
-    borderRadius: 15,
-    borderWidth: StyleSheet.hairlineWidth,
-    overflow: 'hidden',
-  },
-  gridHeader: {
+  emptyCta: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 6,
+    paddingHorizontal: 16,
+    height: 38,
+    borderRadius: 10,
+    marginTop: 6,
+  },
+  emptyCtaText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  pillsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
+    paddingVertical: 2,
   },
-  colCaption: {
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.45,
-  },
-  desktopHeaderNameCol: {
-    width: 232,
-    flexShrink: 0,
-  },
-  desktopHeaderStatsCol: {
-    width: 76,
-    alignItems: 'flex-end',
-  },
-  menuSpacer: {
-    width: 28,
-  },
-  daysRow: {
-    flex: 1,
+  habitPillWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     gap: 4,
   },
-  dayHeaderCell: {
-    flex: 1,
+  habitPill: {
+    flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
+    gap: 7,
+    height: 34,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    maxWidth: 200,
   },
-  weekdayText: {
-    fontSize: 10,
-    fontWeight: '700',
-    textTransform: 'uppercase',
+  habitDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
-  dayNumBadge: {
-    width: 22,
-    height: 22,
-    borderRadius: 7,
-    alignItems: 'center',
-    justifyContent: 'center',
+  habitPillText: {
+    fontSize: 13,
+    fontWeight: '600',
+    flexShrink: 1,
   },
-  dayNumText: {
+  pillStreak: {
     fontSize: 11,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
-  mobileCardsList: {
-    gap: 10,
-  },
-  quickAddBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderRadius: 13,
+  pillEditBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
-    paddingLeft: 14,
-    paddingRight: 6,
-    paddingVertical: 6,
-  },
-  quickAddInput: {
-    flex: 1,
-    fontSize: 14,
-    paddingVertical: 6,
-    minWidth: 0,
-  },
-  quickAddBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 9,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  disabled: {
-    opacity: 0.35,
+  monthHeroRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 16,
+  },
+  monthSideCard: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 18,
+    justifyContent: 'space-between',
+  },
+  monthSideTop: {
+    gap: 16,
+  },
+  monthSideHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  monthSideTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+  },
+  monthSideSub: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  toYearBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    height: 30,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  toYearBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  perHabitSection: {
+    gap: 8,
+  },
+  perHabitHeading: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+  },
+  perHabitList: {
+    gap: 7,
+  },
+  perHabitRow: {
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    gap: 6,
+  },
+  perHabitRowTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  perHabitNameWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    minWidth: 0,
+  },
+  perHabitName: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  perHabitCount: {
+    fontSize: 11,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  perHabitBarTrack: {
+    height: 4,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  perHabitBarFill: {
+    height: '100%',
+    borderRadius: 2,
+  },
+  mobileMonthStack: {
+    gap: 12,
+  },
+  footerCard: {
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 16,
+    gap: 14,
+  },
+  footerMottoCol: {
+    gap: 3,
+  },
+  footerMottoTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  footerMottoSub: {
+    fontSize: 12,
+  },
+  footerStatsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  footerStatTile: {
+    flex: 1,
+    borderRadius: 11,
+    padding: 11,
+    gap: 2,
+  },
+  footerStatVal: {
+    fontSize: 16,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  footerStatPct: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  footerStatLbl: {
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  modalRoot: {
+    flex: 1,
+  },
+  modalRootDesktop: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalRootMobile: {
+    justifyContent: 'flex-end',
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(10, 12, 16, 0.5)',
+  },
+  dayModalCard: {
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+  },
+  dayModalDesktop: {
+    width: '100%',
+    maxWidth: 360,
+    borderRadius: 16,
+  },
+  dayModalMobile: {
+    width: '100%',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+  },
+  dayModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 8,
+  },
+  dayModalHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  dayMarkAllBtn: {
+    paddingHorizontal: 10,
+    height: 28,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayMarkAllText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  dayModalTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  dayModalClose: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayModalList: {
+    padding: 12,
+    gap: 6,
+  },
+  dayModalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  dayModalCheck: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    borderWidth: 1.8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayModalRowTitle: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

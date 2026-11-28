@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Modal,
   Platform,
@@ -19,13 +19,16 @@ import {
   HABIT_ICONS,
   type HabitWithStats,
 } from '@/features/habits/types';
-import { toDateKey } from '@/features/kanban/types';
 import { useThemeColors, useViewport } from '@/theme/colors';
 
 type Props = {
   visible: boolean;
   mode: 'create' | 'edit';
   habit?: HabitWithStats | null;
+  defaultColor?: string;
+  canMovePrev?: boolean;
+  canMoveNext?: boolean;
+  onMoveOrder?: (delta: -1 | 1) => Promise<void>;
   onClose: () => void;
   onSave: (input: {
     title: string;
@@ -36,8 +39,6 @@ type Props = {
   onDelete?: (habitId: string) => Promise<void>;
 };
 
-const TARGET_PRESETS = [3, 5, 7] as const;
-
 export function HabitDialog(props: Props) {
   if (!props.visible) {
     return null;
@@ -45,36 +46,27 @@ export function HabitDialog(props: Props) {
   return <HabitDialogContent key={`${props.mode}-${props.habit?.id ?? 'new'}`} {...props} />;
 }
 
-function HabitDialogContent({ mode, habit, onClose, onSave, onDelete }: Props) {
+function HabitDialogContent({
+  mode,
+  habit,
+  defaultColor,
+  canMovePrev,
+  canMoveNext,
+  onMoveOrder,
+  onClose,
+  onSave,
+  onDelete,
+}: Props) {
   const colors = useThemeColors();
   const { isDesktop } = useViewport();
   const insets = useSafeAreaInsets();
 
   const [title, setTitle] = useState(mode === 'edit' && habit ? habit.title : '');
-  const [color, setColor] = useState(mode === 'edit' && habit ? habit.color : HABIT_COLORS[0]);
-  const [icon, setIcon] = useState<IconName>(mode === 'edit' && habit ? habit.icon : 'flame');
-  const [targetPerWeek, setTargetPerWeek] = useState(
-    mode === 'edit' && habit ? habit.targetPerWeek : 7,
+  const [color, setColor] = useState(
+    mode === 'edit' && habit ? habit.color : defaultColor ?? HABIT_COLORS[0],
   );
+  const [icon, setIcon] = useState<IconName>(mode === 'edit' && habit ? habit.icon : 'flame');
   const [confirmDelete, setConfirmDelete] = useState(false);
-
-  const heatmapDays = useMemo(() => {
-    if (mode !== 'edit' || !habit) {
-      return [];
-    }
-    const today = new Date();
-    const list: { dateKey: string; done: boolean; isToday: boolean }[] = [];
-    for (let i = 27; i >= 0; i -= 1) {
-      const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
-      const key = toDateKey(d);
-      list.push({
-        dateKey: key,
-        done: habit.completedDates.has(key),
-        isToday: i === 0,
-      });
-    }
-    return list;
-  }, [mode, habit]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') {
@@ -94,51 +86,37 @@ function HabitDialogContent({ mode, habit, onClose, onSave, onDelete }: Props) {
     if (!clean) {
       return;
     }
-    await onSave({ title: clean, color, icon, targetPerWeek });
-    onClose();
-  }
-
-  async function handleDelete() {
-    if (!habit || !onDelete) {
-      return;
-    }
-    if (!confirmDelete) {
-      setConfirmDelete(true);
-      return;
-    }
-    await onDelete(habit.id);
+    await onSave({
+      title: clean,
+      color,
+      icon,
+      targetPerWeek: mode === 'edit' && habit ? habit.targetPerWeek : 7,
+    });
     onClose();
   }
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <View style={styles.root}>
+      <View style={[styles.root, isDesktop ? styles.rootDesktop : styles.rootMobile]}>
         <Pressable style={styles.backdrop} onPress={onClose} />
         <Animated.View
           entering={
             isDesktop ? FadeIn.duration(140) : SlideInDown.springify().damping(24).stiffness(260)
           }
           style={[
-            styles.dialog,
-            isDesktop ? styles.dialogDesktop : styles.dialogMobile,
+            styles.card,
+            isDesktop ? styles.cardDesktop : styles.cardMobile,
             {
               backgroundColor: colors.surface,
               borderColor: colors.line,
-              paddingBottom: isDesktop ? 16 : Math.max(insets.bottom, 16),
+              paddingBottom: isDesktop ? 18 : Math.max(insets.bottom, 18),
             },
           ]}>
-          {!isDesktop ? (
-            <View style={styles.grabberRow}>
-              <View style={[styles.grabber, { backgroundColor: colors.line }]} />
-            </View>
-          ) : null}
-
-          <View style={[styles.headerRow, { borderBottomColor: colors.line }]}>
-            <Text style={[styles.title, { color: colors.text }]}>
-              {mode === 'edit' ? 'Привычка' : 'Новая привычка'}
+          <View style={[styles.header, { borderBottomColor: colors.line }]}>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>
+              {mode === 'create' ? 'Новая привычка' : 'Настроить привычку'}
             </Text>
             <RipplePressable
-              accessibilityLabel="Закрыть"
               onPress={onClose}
               style={StyleSheet.flatten([
                 styles.closeBtn,
@@ -148,62 +126,34 @@ function HabitDialogContent({ mode, habit, onClose, onSave, onDelete }: Props) {
             </RipplePressable>
           </View>
 
-          <ScrollView
-            style={styles.body}
-            contentContainerStyle={styles.bodyContent}
-            keyboardShouldPersistTaps="handled">
-            {/* 28-Day Heatmap & Streak Stats in Edit Mode */}
+          <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+            {/* Compact streak summary in Edit Mode */}
             {mode === 'edit' && habit ? (
-              <View
-                style={[
-                  styles.statsCard,
-                  { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
-                ]}>
-                <View style={styles.statsNumsRow}>
-                  <View style={styles.statBox}>
-                    <Text style={[styles.statNum, { color: colors.text }]}>
-                      {habit.currentStreak}д
-                    </Text>
-                    <Text style={[styles.statLabel, { color: colors.muted }]}>Серия</Text>
-                  </View>
-                  <View style={styles.statBox}>
-                    <Text style={[styles.statNum, { color: colors.text }]}>
-                      {habit.bestStreak}д
-                    </Text>
-                    <Text style={[styles.statLabel, { color: colors.muted }]}>Рекорд</Text>
-                  </View>
-                  <View style={styles.statBox}>
-                    <Text style={[styles.statNum, { color: colors.text }]}>
-                      {habit.completedDates.size}
-                    </Text>
-                    <Text style={[styles.statLabel, { color: colors.muted }]}>Всего</Text>
-                  </View>
-                </View>
-
-                <View style={styles.heatmapWrap}>
-                  <Text style={[styles.heatmapCaption, { color: colors.muted }]}>
-                    Последние 28 дней
+              <View style={styles.streakRow}>
+                <View style={[styles.statTile, { backgroundColor: colors.surfaceSubtle }]}>
+                  <Text style={[styles.statVal, { color: colors.text }]}>
+                    {habit.currentStreak} дн.
                   </Text>
-                  <View style={styles.heatmapGrid}>
-                    {heatmapDays.map((d) => (
-                      <View
-                        key={d.dateKey}
-                        style={[
-                          styles.heatCell,
-                          {
-                            backgroundColor: d.done ? color : colors.surface,
-                            borderColor: d.isToday ? colors.text : colors.line,
-                          },
-                        ]}
-                      />
-                    ))}
-                  </View>
+                  <Text style={[styles.statLbl, { color: colors.muted }]}>Текущая серия</Text>
+                </View>
+                <View style={[styles.statTile, { backgroundColor: colors.surfaceSubtle }]}>
+                  <Text style={[styles.statVal, { color: colors.text }]}>
+                    {habit.bestStreak} дн.
+                  </Text>
+                  <Text style={[styles.statLbl, { color: colors.muted }]}>Лучшая серия</Text>
+                </View>
+                <View style={[styles.statTile, { backgroundColor: colors.surfaceSubtle }]}>
+                  <Text style={[styles.statVal, { color: colors.text }]}>
+                    {habit.completedDates.size}
+                  </Text>
+                  <Text style={[styles.statLbl, { color: colors.muted }]}>Всего отметок</Text>
                 </View>
               </View>
             ) : null}
 
+            <Text style={[styles.label, { color: colors.muted }]}>Название</Text>
             <TextInput
-              autoFocus={mode === 'create'}
+              autoFocus
               value={title}
               onChangeText={setTitle}
               onSubmitEditing={handleSubmit}
@@ -219,129 +169,125 @@ function HabitDialogContent({ mode, habit, onClose, onSave, onDelete }: Props) {
               ]}
             />
 
-            <View style={styles.field}>
-              <Text style={[styles.label, { color: colors.muted }]}>Цвет</Text>
-              <View style={styles.rowWrap}>
-                {HABIT_COLORS.map((swatch) => {
-                  const selected = color === swatch;
-                  return (
-                    <RipplePressable
-                      key={swatch}
-                      onPress={() => setColor(swatch)}
-                      style={StyleSheet.flatten([
-                        styles.swatch,
-                        {
-                          backgroundColor: swatch,
-                          borderColor: selected ? colors.text : 'transparent',
-                        },
-                      ])}>
-                      {selected ? (
-                        <AppIcon name="check" size={12} color="#FFFFFF" strokeWidth={2.5} />
-                      ) : null}
-                    </RipplePressable>
-                  );
-                })}
-              </View>
+            <Text style={[styles.label, { color: colors.muted }]}>Цвет ячеек</Text>
+            <View style={styles.paletteRow}>
+              {HABIT_COLORS.map((c) => {
+                const active = color === c;
+                return (
+                  <RipplePressable
+                    key={c}
+                    onPress={() => setColor(c)}
+                    style={StyleSheet.flatten([
+                      styles.colorCircle,
+                      {
+                        backgroundColor: c,
+                        borderColor: active ? colors.text : 'transparent',
+                      },
+                    ])}>
+                    {active ? <AppIcon name="check" size="xs" color="#FFFFFF" /> : null}
+                  </RipplePressable>
+                );
+              })}
             </View>
 
-            <View style={styles.field}>
-              <Text style={[styles.label, { color: colors.muted }]}>Иконка</Text>
-              <View style={styles.rowWrap}>
-                {HABIT_ICONS.map((ic) => {
-                  const selected = icon === ic;
-                  return (
-                    <RipplePressable
-                      key={ic}
-                      onPress={() => setIcon(ic)}
-                      style={StyleSheet.flatten([
-                        styles.iconChip,
-                        {
-                          backgroundColor: selected ? colors.surfaceActive : colors.surfaceSubtle,
-                          borderColor: selected ? colors.text : colors.line,
-                        },
-                      ])}>
-                      <AppIcon name={ic} size="sm" color={selected ? color : colors.muted} />
-                    </RipplePressable>
-                  );
-                })}
-              </View>
+            <Text style={[styles.label, { color: colors.muted }]}>Иконка</Text>
+            <View style={styles.paletteRow}>
+              {HABIT_ICONS.map((ic) => {
+                const active = icon === ic;
+                return (
+                  <RipplePressable
+                    key={ic}
+                    onPress={() => setIcon(ic)}
+                    style={StyleSheet.flatten([
+                      styles.iconTile,
+                      {
+                        backgroundColor: active ? colors.surfaceActive : colors.surfaceSubtle,
+                        borderColor: active ? colors.text : colors.line,
+                      },
+                    ])}>
+                    <AppIcon name={ic} size="sm" color={active ? color : colors.muted} />
+                  </RipplePressable>
+                );
+              })}
             </View>
 
-            <View style={styles.field}>
-              <Text style={[styles.label, { color: colors.muted }]}>Цель в неделю</Text>
-              <View style={styles.rowWrap}>
-                {TARGET_PRESETS.map((num) => {
-                  const selected = targetPerWeek === num;
-                  return (
-                    <RipplePressable
-                      key={num}
-                      onPress={() => setTargetPerWeek(num)}
-                      style={StyleSheet.flatten([
-                        styles.targetChip,
-                        {
-                          backgroundColor: selected ? colors.surfaceActive : colors.surfaceSubtle,
-                          borderColor: selected ? colors.text : colors.line,
-                        },
-                      ])}>
-                      <Text
-                        style={[
-                          styles.targetText,
-                          { color: selected ? colors.text : colors.muted },
-                        ]}>
-                        {num === 7 ? 'Каждый день (7)' : `${num} дн / нед`}
-                      </Text>
-                    </RipplePressable>
-                  );
-                })}
-              </View>
-            </View>
-          </ScrollView>
+            {mode === 'edit' && onMoveOrder && (canMovePrev || canMoveNext) ? (
+              <>
+                <Text style={[styles.label, { color: colors.muted }]}>Порядок в списке</Text>
+                <View style={styles.orderRow}>
+                  <RipplePressable
+                    disabled={!canMovePrev}
+                    onPress={() => onMoveOrder(-1)}
+                    style={StyleSheet.flatten([
+                      styles.orderBtn,
+                      { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
+                      !canMovePrev ? styles.disabled : null,
+                    ])}>
+                    <AppIcon name="arrowLeft" size="xs" color={colors.text} />
+                    <Text style={[styles.orderBtnText, { color: colors.text }]}>Раньше</Text>
+                  </RipplePressable>
 
-          <View style={[styles.footer, { borderTopColor: colors.line }]}>
-            {mode === 'edit' && onDelete && habit ? (
-              <RipplePressable
-                onPress={handleDelete}
-                style={StyleSheet.flatten([
-                  styles.deleteBtn,
-                  { backgroundColor: confirmDelete ? colors.danger : colors.dangerBg },
-                ])}>
-                <AppIcon
-                  name="trash"
-                  size="xs"
-                  color={confirmDelete ? '#FFFFFF' : colors.danger}
-                />
-                <Text
-                  style={[
-                    styles.btnLabel,
-                    { color: confirmDelete ? '#FFFFFF' : colors.danger },
-                  ]}>
-                  {confirmDelete ? 'Точно удалить?' : 'Удалить'}
-                </Text>
-              </RipplePressable>
-            ) : (
-              <View />
-            )}
+                  <RipplePressable
+                    disabled={!canMoveNext}
+                    onPress={() => onMoveOrder(1)}
+                    style={StyleSheet.flatten([
+                      styles.orderBtn,
+                      { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
+                      !canMoveNext ? styles.disabled : null,
+                    ])}>
+                    <Text style={[styles.orderBtnText, { color: colors.text }]}>Дальше</Text>
+                    <AppIcon name="arrowRight" size="xs" color={colors.text} />
+                  </RipplePressable>
+                </View>
+              </>
+            ) : null}
 
-            <View style={styles.actions}>
-              <RipplePressable
-                onPress={onClose}
-                style={StyleSheet.flatten([styles.btn, { backgroundColor: colors.surfaceSubtle }])}>
-                <Text style={[styles.btnLabel, { color: colors.muted }]}>Отмена</Text>
-              </RipplePressable>
+            <View style={styles.footerActions}>
+              {mode === 'edit' && habit && onDelete ? (
+                <RipplePressable
+                  onPress={async () => {
+                    if (!confirmDelete) {
+                      setConfirmDelete(true);
+                      return;
+                    }
+                    await onDelete(habit.id);
+                    onClose();
+                  }}
+                  style={StyleSheet.flatten([
+                    styles.deleteBtn,
+                    { backgroundColor: confirmDelete ? colors.danger : colors.dangerBg },
+                  ])}>
+                  <AppIcon
+                    name="trash"
+                    size="xs"
+                    color={confirmDelete ? '#FFFFFF' : colors.danger}
+                  />
+                  <Text
+                    style={[
+                      styles.deleteBtnText,
+                      { color: confirmDelete ? '#FFFFFF' : colors.danger },
+                    ]}>
+                    {confirmDelete ? 'Точно удалить?' : 'Удалить'}
+                  </Text>
+                </RipplePressable>
+              ) : (
+                <View />
+              )}
+
               <RipplePressable
                 disabled={title.trim().length === 0}
                 onPress={handleSubmit}
                 style={StyleSheet.flatten([
-                  styles.btn,
+                  styles.saveBtn,
                   { backgroundColor: colors.accent },
                   title.trim().length === 0 ? styles.disabled : null,
                 ])}>
-                <Text style={[styles.btnLabel, { color: colors.accentText }]}>
-                  {mode === 'edit' ? 'Сохранить' : 'Добавить'}
+                <Text style={[styles.saveBtnText, { color: colors.accentText }]}>
+                  {mode === 'create' ? 'Создать' : 'Сохранить'}
                 </Text>
               </RipplePressable>
             </View>
-          </View>
+          </ScrollView>
         </Animated.View>
       </View>
     </Modal>
@@ -351,52 +297,44 @@ function HabitDialogContent({ mode, habit, onClose, onSave, onDelete }: Props) {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
+  },
+  rootDesktop: {
     alignItems: 'center',
     justifyContent: 'center',
+    padding: 20,
+  },
+  rootMobile: {
+    justifyContent: 'flex-end',
   },
   backdrop: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(10, 12, 16, 0.52)',
+    backgroundColor: 'rgba(10, 12, 16, 0.5)',
   },
-  dialog: {
-    width: '100%',
+  card: {
     borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
   },
-  dialogDesktop: {
+  cardDesktop: {
+    width: '100%',
     maxWidth: 440,
-    maxHeight: '88%',
-    borderRadius: 18,
+    maxHeight: '85%',
+    borderRadius: 16,
   },
-  dialogMobile: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    maxHeight: '90%',
+  cardMobile: {
+    width: '100%',
+    maxHeight: '88%',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    borderBottomWidth: 0,
   },
-  grabberRow: {
-    alignItems: 'center',
-    paddingTop: 10,
-    paddingBottom: 2,
-  },
-  grabber: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-  },
-  headerRow: {
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 18,
-    paddingVertical: 13,
+    paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  title: {
+  headerTitle: {
     fontSize: 16,
     fontWeight: '700',
   },
@@ -408,79 +346,49 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   body: {
-    flexGrow: 0,
-  },
-  bodyContent: {
     padding: 18,
-    gap: 14,
+    gap: 10,
   },
-  statsCard: {
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: 12,
-    gap: 12,
-  },
-  statsNumsRow: {
+  streakRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     gap: 8,
+    marginBottom: 4,
   },
-  statBox: {
+  statTile: {
     flex: 1,
-    alignItems: 'center',
+    borderRadius: 10,
+    padding: 10,
     gap: 2,
   },
-  statNum: {
-    fontSize: 18,
+  statVal: {
+    fontSize: 16,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
-  statLabel: {
+  statLbl: {
     fontSize: 11,
-    fontWeight: '600',
   },
-  heatmapWrap: {
-    gap: 6,
-  },
-  heatmapCaption: {
+  label: {
     fontSize: 11,
-    fontWeight: '600',
-  },
-  heatmapGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 5,
-  },
-  heatCell: {
-    width: '12.5%',
-    aspectRatio: 1,
-    maxWidth: 24,
-    borderRadius: 5,
-    borderWidth: StyleSheet.hairlineWidth,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginTop: 4,
   },
   input: {
     borderRadius: 10,
     borderWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    fontSize: 15,
-    fontWeight: '500',
+    fontSize: 14,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
   },
-  field: {
-    gap: 7,
-  },
-  label: {
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.45,
-  },
-  rowWrap: {
+  paletteRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
   },
-  swatch: {
+  colorCircle: {
     width: 30,
     height: 30,
     borderRadius: 15,
@@ -488,7 +396,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  iconChip: {
+  iconTile: {
     width: 36,
     height: 36,
     borderRadius: 10,
@@ -496,46 +404,55 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  targetChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 9,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  targetText: {
-    fontSize: 12.5,
-    fontWeight: '600',
-  },
-  footer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingTop: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
-  actions: {
+  orderRow: {
     flexDirection: 'row',
     gap: 8,
   },
-  btn: {
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 10,
+  orderBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    height: 34,
+    borderRadius: 9,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  orderBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  footerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 12,
+    gap: 10,
   },
   deleteBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 10,
+    height: 36,
+    borderRadius: 9,
   },
-  btnLabel: {
+  deleteBtnText: {
     fontSize: 13,
     fontWeight: '600',
   },
+  saveBtn: {
+    paddingHorizontal: 18,
+    height: 36,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
   disabled: {
-    opacity: 0.35,
+    opacity: 0.4,
   },
 });

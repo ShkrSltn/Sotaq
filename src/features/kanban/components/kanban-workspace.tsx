@@ -20,6 +20,7 @@ import {
 } from '@/components/anchored-popover';
 import { AppIcon } from '@/components/app-icon';
 import { DragTrashZone } from '@/components/drag-trash-zone';
+import { MobileSearchBar } from '@/components/mobile-search-bar';
 import { RipplePressable } from '@/components/ripple-pressable';
 import { HistoryToast, UndoRedoButtons } from '@/components/undo-redo-bar';
 import { WebDragBox, type WebDomDragEvent } from '@/components/web-drag-box';
@@ -121,7 +122,7 @@ export function KanbanWorkspace() {
 
   const [search, setSearch] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all');
-  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [boardMenuOpen, setBoardMenuOpen] = useState(false);
   const [boardMenuAnchor, setBoardMenuAnchor] = useState<AnchorRect | null>(null);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
@@ -660,6 +661,33 @@ export function KanbanWorkspace() {
     });
   }
 
+  function handleMobileSearchChange(nextText: string) {
+    setSearch(nextText);
+    const clean = nextText.trim().toLowerCase();
+    if (isDesktop || !clean || columns.length === 0) {
+      return;
+    }
+    const matchesQuery = (card: KanbanCardRecord) => {
+      if (priorityFilter !== 'all' && card.priority !== priorityFilter) {
+        return false;
+      }
+      return `${card.title} ${card.description}`.toLowerCase().includes(clean);
+    };
+    const currentCol = columns[activeColumnIndex];
+    const hasMatchInCurrent =
+      currentCol !== undefined &&
+      allCards.some((card) => card.columnId === currentCol.id && matchesQuery(card));
+    if (hasMatchInCurrent) {
+      return;
+    }
+    const firstMatchingColIndex = columns.findIndex((col) =>
+      allCards.some((card) => card.columnId === col.id && matchesQuery(card)),
+    );
+    if (firstMatchingColIndex !== -1 && firstMatchingColIndex !== activeColumnIndex) {
+      jumpToMobileColumn(firstMatchingColIndex);
+    }
+  }
+
   function handleMobilePagerScroll(event: NativeSyntheticEvent<NativeScrollEvent>) {
     const x = event.nativeEvent.contentOffset.x;
     const nextIndex = Math.round(x / mobileSnapInterval);
@@ -770,256 +798,269 @@ export function KanbanWorkspace() {
     <View style={[styles.screen, isDesktop ? styles.screenDesktop : styles.screenMobile]}>
       {/* Top Toolbar: Clean Linear-style Board Selector + Grouped Controls */}
       <View style={styles.toolbar}>
-        <View style={styles.toolbarLeft}>
-          <View ref={boardMenuBtnRef} collapsable={false}>
-            <RipplePressable
-              accessibilityLabel="Выбрать или настроить доску"
-              onPress={() => {
-                if (boardMenuOpen) {
-                  setBoardMenuOpen(false);
-                  return;
-                }
-                measureAnchor(boardMenuBtnRef.current, (rect) => {
-                  setBoardMenuAnchor(rect);
-                  setBoardMenuOpen(true);
-                });
-              }}
-              style={StyleSheet.flatten([
-                styles.boardSwitcherBtn,
-                {
-                  backgroundColor: boardMenuOpen ? colors.surfaceActive : colors.surface,
-                  borderColor: boardMenuOpen ? colors.text : colors.line,
-                },
-              ])}>
-              <AppIcon name="kanban" size="sm" color={colors.muted} />
-              <Text style={[styles.boardSwitcherTitle, { color: colors.text }]} numberOfLines={1}>
-                {boardData.board.title}
-              </Text>
-              <AppIcon name="chevronDown" size="xs" color={colors.muted} />
-            </RipplePressable>
-          </View>
-
-          {isDesktop ? (
-            <Text style={[styles.boardCountMeta, { color: colors.muted }]}>
-              {hasActiveFilters
-                ? `${filteredCards.length} из ${allCards.length}`
-                : `${allCards.length} ${allCards.length === 1 ? 'задача' : allCards.length >= 2 && allCards.length <= 4 ? 'задачи' : 'задач'}`}
-            </Text>
-          ) : null}
-        </View>
-
-        <View style={styles.toolbarRight}>
-          {isDesktop ? (
-            <>
-              {/* Group 1: Search & Filter */}
-              <View style={styles.toolbarGroup}>
-                <View
-                  style={[
-                    styles.searchBox,
-                    { backgroundColor: colors.surface, borderColor: colors.line },
-                  ]}>
-                  <AppIcon name="search" size="xs" color={colors.muted} />
-                  <TextInput
-                    value={search}
-                    onChangeText={setSearch}
-                    placeholder="Поиск…"
-                    placeholderTextColor={colors.muted}
-                    style={[styles.searchInput, { color: colors.text }]}
-                  />
-                  {search.length > 0 ? (
-                    <RipplePressable onPress={() => setSearch('')} style={styles.clearBtn}>
-                      <AppIcon name="close" size="xs" color={colors.muted} />
-                    </RipplePressable>
-                  ) : null}
-                </View>
-
-                <View ref={filterMenuBtnRef} collapsable={false}>
-                  <RipplePressable
-                    accessibilityLabel="Фильтр по приоритету"
-                    onPress={() => {
-                      if (filterMenuOpen) {
-                        setFilterMenuOpen(false);
-                        return;
-                      }
-                      measureAnchor(filterMenuBtnRef.current, (rect) => {
-                        setFilterMenuAnchor(rect);
-                        setFilterMenuOpen(true);
-                      });
-                    }}
-                    style={StyleSheet.flatten([
-                      styles.filterTriggerBtn,
-                      {
-                        backgroundColor:
-                          priorityFilter !== 'all' || filterMenuOpen
-                            ? colors.surfaceActive
-                            : colors.surface,
-                        borderColor:
-                          priorityFilter !== 'all' || filterMenuOpen ? colors.text : colors.line,
-                      },
-                    ])}>
-                    {priorityFilter !== 'all' ? (
-                      <View
-                        style={[
-                          styles.filterDot,
-                          { backgroundColor: PRIORITY_META[priorityFilter].dotColor },
-                        ]}
-                      />
-                    ) : (
-                      <AppIcon name="filter" size="xs" color={colors.muted} />
-                    )}
-                    <Text
-                      style={[
-                        styles.filterTriggerText,
-                        { color: priorityFilter !== 'all' ? colors.text : colors.muted },
-                      ]}>
-                      {priorityFilter === 'all'
-                        ? 'Приоритет'
-                        : PRIORITY_META[priorityFilter].label}
-                    </Text>
-                    {priorityFilter !== 'all' ? (
-                      <Pressable
-                        accessibilityLabel="Сбросить фильтр"
-                        hitSlop={6}
-                        onPress={(event) => {
-                          event.stopPropagation?.();
-                          setPriorityFilter('all');
-                        }}
-                        style={styles.filterResetHit}>
-                        <AppIcon name="close" size={11} color={colors.muted} />
-                      </Pressable>
-                    ) : (
-                      <AppIcon name="chevronDown" size={11} color={colors.muted} />
-                    )}
-                  </RipplePressable>
-                </View>
-              </View>
-
-              <View style={[styles.toolbarDivider, { backgroundColor: colors.line }]} />
-
-              {/* Group 2: History */}
-              <UndoRedoButtons
-                canUndo={historyMeta.canUndo}
-                canRedo={historyMeta.canRedo}
-                colors={colors}
-                onUndo={() => {
-                  handleUndoBoard();
-                }}
-                onRedo={() => {
-                  handleRedoBoard();
-                }}
-              />
-
-              <View style={[styles.toolbarDivider, { backgroundColor: colors.line }]} />
-
-              {/* Group 3: Add Column */}
-              <RipplePressable
-                onPress={() => setColumnDialog({ open: true, mode: 'create', column: null })}
-                style={StyleSheet.flatten([
-                  styles.addColBtn,
-                  { backgroundColor: colors.surface, borderColor: colors.line },
-                ])}>
-                <AppIcon name="plus" size="xs" color={colors.muted} />
-                <Text style={[styles.addColLabel, { color: colors.text }]}>Колонка</Text>
-              </RipplePressable>
-            </>
-          ) : (
-            <>
-              {historyMeta.canUndo || historyMeta.canRedo ? (
-                <UndoRedoButtons
-                  compact
-                  canUndo={historyMeta.canUndo}
-                  canRedo={historyMeta.canRedo}
-                  colors={colors}
-                  onUndo={() => {
-                    handleUndoBoard();
-                  }}
-                  onRedo={() => {
-                    handleRedoBoard();
-                  }}
-                />
-              ) : null}
-
-              <RipplePressable
-                accessibilityLabel="Поиск и фильтр"
-                onPress={() => setMobileFiltersOpen((value) => !value)}
-                style={StyleSheet.flatten([
-                  styles.iconPill,
-                  {
-                    backgroundColor:
-                      mobileFiltersOpen || hasActiveFilters ? colors.surfaceActive : colors.surface,
-                    borderColor:
-                      mobileFiltersOpen || hasActiveFilters ? colors.text : colors.line,
-                  },
-                ])}>
-                <AppIcon
-                  name={hasActiveFilters ? 'filter' : 'search'}
-                  size="sm"
-                  color={mobileFiltersOpen || hasActiveFilters ? colors.text : colors.muted}
-                />
-              </RipplePressable>
-            </>
-          )}
-        </View>
-      </View>
-
-      {/* Mobile collapsible search & priority bar */}
-      {!isDesktop && mobileFiltersOpen ? (
-        <View style={[styles.mobileFilterPanel, { backgroundColor: colors.surface, borderColor: colors.line }]}>
-          <View
-            style={[
-              styles.searchBox,
-              styles.searchBoxFull,
-              { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
-            ]}>
-            <TextInput
-              value={search}
-              onChangeText={setSearch}
-              placeholder="Поиск карточек…"
-              placeholderTextColor={colors.muted}
-              style={[styles.searchInput, { color: colors.text }]}
-            />
-            {search.length > 0 ? (
-              <RipplePressable onPress={() => setSearch('')} style={styles.clearBtn}>
-                <AppIcon name="close" size="xs" color={colors.muted} />
-              </RipplePressable>
-            ) : null}
-          </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filterGroup}>
-            {PRIORITY_FILTERS.map((filter) => {
-              const active = priorityFilter === filter.key;
-              return (
+        {!isDesktop && mobileSearchOpen ? (
+          <MobileSearchBar
+            value={search}
+            onChangeText={handleMobileSearchChange}
+            onCancel={() => {
+              setSearch('');
+              setMobileSearchOpen(false);
+            }}
+            placeholder="Поиск карточек…"
+            colors={colors}
+            matchCount={filteredCards.length}
+          />
+        ) : (
+          <>
+            <View style={styles.toolbarLeft}>
+              <View ref={boardMenuBtnRef} collapsable={false}>
                 <RipplePressable
-                  key={filter.key}
-                  onPress={() => setPriorityFilter(filter.key)}
+                  accessibilityLabel="Выбрать или настроить доску"
+                  onPress={() => {
+                    if (boardMenuOpen) {
+                      setBoardMenuOpen(false);
+                      return;
+                    }
+                    measureAnchor(boardMenuBtnRef.current, (rect) => {
+                      setBoardMenuAnchor(rect);
+                      setBoardMenuOpen(true);
+                    });
+                  }}
                   style={StyleSheet.flatten([
-                    styles.filterChip,
+                    styles.boardSwitcherBtn,
                     {
-                      backgroundColor: active ? colors.surfaceActive : colors.surfaceSubtle,
-                      borderColor: active ? colors.line : 'transparent',
+                      backgroundColor: boardMenuOpen ? colors.surfaceActive : colors.surface,
+                      borderColor: boardMenuOpen ? colors.text : colors.line,
                     },
                   ])}>
-                  {filter.key !== 'all' ? (
+                  <AppIcon name="kanban" size="sm" color={colors.muted} />
+                  <Text
+                    style={[styles.boardSwitcherTitle, { color: colors.text }]}
+                    numberOfLines={1}>
+                    {boardData.board.title}
+                  </Text>
+                  <AppIcon name="chevronDown" size="xs" color={colors.muted} />
+                </RipplePressable>
+              </View>
+
+              {isDesktop ? (
+                <Text style={[styles.boardCountMeta, { color: colors.muted }]}>
+                  {hasActiveFilters
+                    ? `${filteredCards.length} из ${allCards.length}`
+                    : `${allCards.length} ${allCards.length === 1 ? 'задача' : allCards.length >= 2 && allCards.length <= 4 ? 'задачи' : 'задач'}`}
+                </Text>
+              ) : null}
+            </View>
+
+            <View style={styles.toolbarRight}>
+              {isDesktop ? (
+                <>
+                  {/* Group 1: Search & Filter */}
+                  <View style={styles.toolbarGroup}>
                     <View
                       style={[
-                        styles.filterDot,
-                        { backgroundColor: PRIORITY_META[filter.key].dotColor },
-                      ]}
+                        styles.searchBox,
+                        { backgroundColor: colors.surface, borderColor: colors.line },
+                      ]}>
+                      <AppIcon name="search" size="xs" color={colors.muted} />
+                      <TextInput
+                        value={search}
+                        onChangeText={setSearch}
+                        placeholder="Поиск…"
+                        placeholderTextColor={colors.muted}
+                        style={[styles.searchInput, { color: colors.text }]}
+                      />
+                      {search.length > 0 ? (
+                        <RipplePressable onPress={() => setSearch('')} style={styles.clearBtn}>
+                          <AppIcon name="close" size="xs" color={colors.muted} />
+                        </RipplePressable>
+                      ) : null}
+                    </View>
+
+                    <View ref={filterMenuBtnRef} collapsable={false}>
+                      <RipplePressable
+                        accessibilityLabel="Фильтр по приоритету"
+                        onPress={() => {
+                          if (filterMenuOpen) {
+                            setFilterMenuOpen(false);
+                            return;
+                          }
+                          measureAnchor(filterMenuBtnRef.current, (rect) => {
+                            setFilterMenuAnchor(rect);
+                            setFilterMenuOpen(true);
+                          });
+                        }}
+                        style={StyleSheet.flatten([
+                          styles.filterTriggerBtn,
+                          {
+                            backgroundColor:
+                              priorityFilter !== 'all' || filterMenuOpen
+                                ? colors.surfaceActive
+                                : colors.surface,
+                            borderColor:
+                              priorityFilter !== 'all' || filterMenuOpen
+                                ? colors.text
+                                : colors.line,
+                          },
+                        ])}>
+                        {priorityFilter !== 'all' ? (
+                          <View
+                            style={[
+                              styles.filterDot,
+                              { backgroundColor: PRIORITY_META[priorityFilter].dotColor },
+                            ]}
+                          />
+                        ) : (
+                          <AppIcon name="filter" size="xs" color={colors.muted} />
+                        )}
+                        <Text
+                          style={[
+                            styles.filterTriggerText,
+                            { color: priorityFilter !== 'all' ? colors.text : colors.muted },
+                          ]}>
+                          {priorityFilter === 'all'
+                            ? 'Приоритет'
+                            : PRIORITY_META[priorityFilter].label}
+                        </Text>
+                        {priorityFilter !== 'all' ? (
+                          <Pressable
+                            accessibilityLabel="Сбросить фильтр"
+                            hitSlop={6}
+                            onPress={(event) => {
+                              event.stopPropagation?.();
+                              setPriorityFilter('all');
+                            }}
+                            style={styles.filterResetHit}>
+                            <AppIcon name="close" size={11} color={colors.muted} />
+                          </Pressable>
+                        ) : (
+                          <AppIcon name="chevronDown" size={11} color={colors.muted} />
+                        )}
+                      </RipplePressable>
+                    </View>
+                  </View>
+
+                  <View style={[styles.toolbarDivider, { backgroundColor: colors.line }]} />
+
+                  {/* Group 2: History */}
+                  <UndoRedoButtons
+                    canUndo={historyMeta.canUndo}
+                    canRedo={historyMeta.canRedo}
+                    colors={colors}
+                    onUndo={() => {
+                      handleUndoBoard();
+                    }}
+                    onRedo={() => {
+                      handleRedoBoard();
+                    }}
+                  />
+
+                  <View style={[styles.toolbarDivider, { backgroundColor: colors.line }]} />
+
+                  {/* Group 3: Add Column */}
+                  <RipplePressable
+                    onPress={() => setColumnDialog({ open: true, mode: 'create', column: null })}
+                    style={StyleSheet.flatten([
+                      styles.addColBtn,
+                      { backgroundColor: colors.surface, borderColor: colors.line },
+                    ])}>
+                    <AppIcon name="plus" size="xs" color={colors.muted} />
+                    <Text style={[styles.addColLabel, { color: colors.text }]}>Колонка</Text>
+                  </RipplePressable>
+                </>
+              ) : (
+                <>
+                  {historyMeta.canUndo || historyMeta.canRedo ? (
+                    <UndoRedoButtons
+                      compact
+                      canUndo={historyMeta.canUndo}
+                      canRedo={historyMeta.canRedo}
+                      colors={colors}
+                      onUndo={() => {
+                        handleUndoBoard();
+                      }}
+                      onRedo={() => {
+                        handleRedoBoard();
+                      }}
                     />
                   ) : null}
-                  <Text
-                    style={[
-                      styles.filterChipText,
-                      { color: active ? colors.text : colors.muted },
-                    ]}>
-                    {filter.label}
-                  </Text>
-                </RipplePressable>
-              );
-            })}
-          </ScrollView>
+
+                  <View ref={filterMenuBtnRef} collapsable={false}>
+                    <RipplePressable
+                      accessibilityLabel="Фильтр по приоритету"
+                      onPress={() => {
+                        if (filterMenuOpen) {
+                          setFilterMenuOpen(false);
+                          return;
+                        }
+                        measureAnchor(filterMenuBtnRef.current, (rect) => {
+                          setFilterMenuAnchor(rect);
+                          setFilterMenuOpen(true);
+                        });
+                      }}
+                      style={StyleSheet.flatten([
+                        styles.iconPill,
+                        {
+                          backgroundColor:
+                            priorityFilter !== 'all' || filterMenuOpen
+                              ? colors.surfaceActive
+                              : colors.surface,
+                          borderColor:
+                            priorityFilter !== 'all' || filterMenuOpen ? colors.text : colors.line,
+                        },
+                      ])}>
+                      {priorityFilter !== 'all' ? (
+                        <View
+                          style={[
+                            styles.filterDot,
+                            { backgroundColor: PRIORITY_META[priorityFilter].dotColor },
+                          ]}
+                        />
+                      ) : (
+                        <AppIcon name="filter" size="sm" color={colors.muted} />
+                      )}
+                    </RipplePressable>
+                  </View>
+
+                  <RipplePressable
+                    accessibilityLabel="Поиск карточек"
+                    onPress={() => setMobileSearchOpen(true)}
+                    style={StyleSheet.flatten([
+                      styles.iconPill,
+                      {
+                        backgroundColor: colors.surface,
+                        borderColor: colors.line,
+                      },
+                    ])}>
+                    <AppIcon name="search" size="sm" color={colors.muted} />
+                  </RipplePressable>
+                </>
+              )}
+            </View>
+          </>
+        )}
+      </View>
+
+      {/* Mobile active priority dismissible chip */}
+      {!isDesktop && priorityFilter !== 'all' ? (
+        <View style={styles.mobileActiveFilterRow}>
+          <RipplePressable
+            onPress={() => setPriorityFilter('all')}
+            style={StyleSheet.flatten([
+              styles.mobileActiveChip,
+              { backgroundColor: colors.surface, borderColor: colors.line },
+            ])}>
+            <View
+              style={[
+                styles.filterDot,
+                { backgroundColor: PRIORITY_META[priorityFilter].dotColor },
+              ]}
+            />
+            <Text style={[styles.mobileActiveChipText, { color: colors.text }]}>
+              Приоритет: {PRIORITY_META[priorityFilter].label}
+            </Text>
+            <AppIcon name="close" size={11} color={colors.muted} />
+          </RipplePressable>
         </View>
       ) : null}
 
@@ -1033,6 +1074,7 @@ export function KanbanWorkspace() {
           {columns.map((column, index) => {
             const active = index === activeColumnIndex;
             const count = filteredCards.filter((card) => card.columnId === column.id).length;
+            const dimmed = hasActiveFilters && count === 0 && !active;
             return (
               <RipplePressable
                 key={column.id}
@@ -1043,6 +1085,7 @@ export function KanbanWorkspace() {
                     backgroundColor: active ? colors.surface : 'transparent',
                     borderColor: active ? colors.line : 'transparent',
                   },
+                  dimmed ? styles.mobileColTabDimmed : null,
                 ])}>
                 <View style={[styles.colAccentDot, { backgroundColor: column.accent }]} />
                 <Text
@@ -1052,7 +1095,16 @@ export function KanbanWorkspace() {
                   ]}>
                   {column.title}
                 </Text>
-                <Text style={[styles.mobileColTabCount, { color: colors.muted }]}>{count}</Text>
+                <Text
+                  style={[
+                    styles.mobileColTabCount,
+                    {
+                      color:
+                        hasActiveFilters && count > 0 ? colors.text : colors.muted,
+                    },
+                  ]}>
+                  {count}
+                </Text>
               </RipplePressable>
             );
           })}
@@ -1661,9 +1713,10 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   screenMobile: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 12,
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 10,
+    gap: 10,
   },
   toolbar: {
     flexDirection: 'row',
@@ -1734,9 +1787,6 @@ const styles = StyleSheet.create({
     paddingLeft: 10,
     paddingRight: 4,
   },
-  searchBoxFull: {
-    width: '100%',
-  },
   searchInput: {
     flex: 1,
     fontSize: 13,
@@ -1771,26 +1821,26 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     ...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as object) : null),
   },
-  filterGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  filterChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 9,
-    paddingVertical: 6,
-    borderRadius: 9,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
   filterDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
   },
-  filterChipText: {
+  mobileActiveFilterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  mobileActiveChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  mobileActiveChipText: {
     fontSize: 12,
     fontWeight: '600',
   },
@@ -1844,12 +1894,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
-  mobileFilterPanel: {
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: 10,
-    gap: 8,
-  },
   mobileTabsScroll: {
     flexGrow: 0,
   },
@@ -1866,6 +1910,9 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderRadius: 10,
     borderWidth: StyleSheet.hairlineWidth,
+  },
+  mobileColTabDimmed: {
+    opacity: 0.45,
   },
   mobileColTabTitle: {
     fontSize: 13,

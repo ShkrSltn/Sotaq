@@ -172,14 +172,16 @@ export function AdminWorkspace() {
       <View style={styles.inner}>
         {/* Header */}
         <View style={styles.header}>
-          <View style={styles.headerText}>
-            <Text style={[styles.title, { color: colors.text }]}>Админ-панель</Text>
-            <Text style={[styles.subtitle, { color: colors.muted }]}>
-              Пользователи, роли и матрица доступа к фичам
-            </Text>
-          </View>
+          {isDesktop ? (
+            <View style={styles.headerText}>
+              <Text style={[styles.title, { color: colors.text }]}>Админ-панель</Text>
+              <Text style={[styles.subtitle, { color: colors.muted }]}>
+                Пользователи, роли и матрица доступа к фичам
+              </Text>
+            </View>
+          ) : null}
 
-          <View style={styles.tabRow}>
+          <View style={[styles.tabRow, !isDesktop ? styles.tabRowMobile : null]}>
             {(
               [
                 { key: 'users', label: `Пользователи (${stats.total})` },
@@ -193,6 +195,7 @@ export function AdminWorkspace() {
                   onPress={() => setTab(item.key)}
                   style={StyleSheet.flatten([
                     styles.tabBtn,
+                    !isDesktop ? styles.tabBtnMobile : null,
                     {
                       backgroundColor: active ? colors.accent : colors.surface,
                       borderColor: active ? colors.accent : colors.line,
@@ -482,11 +485,19 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
   },
+  tabRowMobile: {
+    flexWrap: 'nowrap',
+  },
   tabBtn: {
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 10,
     borderWidth: StyleSheet.hairlineWidth,
+  },
+  tabBtnMobile: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 9,
   },
   tabLabel: {
     fontSize: 13,

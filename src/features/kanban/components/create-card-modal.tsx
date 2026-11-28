@@ -18,6 +18,9 @@ import { RipplePressable } from '@/components/ripple-pressable';
 import {
   addDaysDateKey,
   formatDueDateLabel,
+  getBoardColorDisplayName,
+  hexWithAlpha,
+  type KanbanBoardColorRecord,
   type KanbanColumnRecord,
   type KanbanPriority,
   PRIORITY_META,
@@ -27,8 +30,10 @@ import { useThemeColors, useViewport } from '@/theme/colors';
 type Props = {
   visible: boolean;
   columns: KanbanColumnRecord[];
+  boardColors: KanbanBoardColorRecord[];
   initialColumnId: string | null;
   initialPriority: KanbanPriority;
+  initialColorId: string | null;
   onClose: () => void;
   onCreate: (input: {
     columnId: string;
@@ -36,6 +41,7 @@ type Props = {
     description: string;
     priority: KanbanPriority;
     dueDate: string | null;
+    colorId: string | null;
     subtasks: string[];
   }) => Promise<void>;
 };
@@ -49,7 +55,7 @@ export function CreateCardModal(props: Props) {
   const fallbackColId = props.initialColumnId ?? props.columns[0].id;
   return (
     <CreateCardModalContent
-      key={`${fallbackColId}-${props.initialPriority}`}
+      key={`${fallbackColId}-${props.initialPriority}-${props.initialColorId ?? 'none'}`}
       {...props}
       resolvedColumnId={fallbackColId}
     />
@@ -58,8 +64,10 @@ export function CreateCardModal(props: Props) {
 
 function CreateCardModalContent({
   columns,
+  boardColors,
   resolvedColumnId,
   initialPriority,
+  initialColorId,
   onClose,
   onCreate,
 }: Props & { resolvedColumnId: string }) {
@@ -71,6 +79,7 @@ function CreateCardModalContent({
   const [description, setDescription] = useState('');
   const [columnId, setColumnId] = useState(resolvedColumnId);
   const [priority, setPriority] = useState<KanbanPriority>(initialPriority);
+  const [colorId, setColorId] = useState<string | null>(initialColorId);
   const [dueDate, setDueDate] = useState<string | null>(null);
   const [subtaskDraft, setSubtaskDraft] = useState('');
   const [subtasks, setSubtasks] = useState<string[]>([]);
@@ -103,6 +112,7 @@ function CreateCardModalContent({
         description: description.trim(),
         priority,
         dueDate,
+        colorId,
         subtasks: finalSubtasks,
       });
       onClose();
@@ -212,6 +222,55 @@ function CreateCardModalContent({
                 })}
               </View>
             </View>
+
+            {/* Board Color / Project Picker */}
+            {boardColors.length > 0 ? (
+              <View style={styles.fieldGroup}>
+                <Text style={[styles.fieldLabel, { color: colors.muted }]}>Цвет / Проект</Text>
+                <View style={styles.pillRow}>
+                  <RipplePressable
+                    onPress={() => setColorId(null)}
+                    style={StyleSheet.flatten([
+                      styles.pill,
+                      {
+                        backgroundColor:
+                          colorId === null ? colors.accent : colors.surfaceSubtle,
+                        borderColor: colorId === null ? colors.accent : colors.line,
+                      },
+                    ])}>
+                    <Text
+                      style={[
+                        styles.pillText,
+                        { color: colorId === null ? colors.accentText : colors.muted },
+                      ]}>
+                      Без цвета
+                    </Text>
+                  </RipplePressable>
+                  {boardColors.map((item) => {
+                    const selected = colorId === item.id;
+                    return (
+                      <RipplePressable
+                        key={item.id}
+                        onPress={() => setColorId(item.id)}
+                        style={StyleSheet.flatten([
+                          styles.pill,
+                          {
+                            backgroundColor: selected
+                              ? hexWithAlpha(item.color, 0.24)
+                              : colors.surfaceSubtle,
+                            borderColor: selected ? item.color : colors.line,
+                          },
+                        ])}>
+                        <View style={[styles.dot, { backgroundColor: item.color }]} />
+                        <Text style={[styles.pillText, { color: colors.text }]}>
+                          {getBoardColorDisplayName(item)}
+                        </Text>
+                      </RipplePressable>
+                    );
+                  })}
+                </View>
+              </View>
+            ) : null}
 
             {/* Priority Picker */}
             <View style={styles.fieldGroup}>

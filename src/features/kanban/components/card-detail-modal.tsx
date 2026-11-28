@@ -13,7 +13,10 @@ import {
 import Animated, { FadeIn, FadeInDown, FadeOut, LinearTransition, SlideInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AppIcon } from '@/components/app-icon';
+import { DragTrashZone } from '@/components/drag-trash-zone';
 import { RipplePressable } from '@/components/ripple-pressable';
+import { WebDragBox } from '@/components/web-drag-box';
 import {
   addDaysDateKey,
   formatDueDateLabel,
@@ -45,6 +48,7 @@ type Props = {
   onAddSubtask: (cardId: string, title: string) => Promise<void>;
   onToggleSubtask: (cardId: string, subtaskId: string, isDone: boolean) => Promise<void>;
   onDeleteSubtask: (cardId: string, subtaskId: string) => Promise<void>;
+  onReorderSubtasks?: (cardId: string, orderedSubtaskIds: string[]) => Promise<void>;
 };
 
 const PRIORITIES: readonly KanbanPriority[] = ['low', 'medium', 'high'];
@@ -69,6 +73,7 @@ function CardDetailModalContent({
   onAddSubtask,
   onToggleSubtask,
   onDeleteSubtask,
+  onReorderSubtasks,
 }: Omit<Props, 'card'> & { card: KanbanCardRecord }) {
   const colors = useThemeColors();
   const { isDesktop } = useViewport();
@@ -80,6 +85,11 @@ function CardDetailModalContent({
   const [dueDate, setDueDate] = useState<string | null>(card.dueDate);
   const [subtaskDraft, setSubtaskDraft] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [draggingSubtaskId, setDraggingSubtaskId] = useState<string | null>(null);
+  const [subtaskDrop, setSubtaskDrop] = useState<{
+    subtaskId: string;
+    position: 'before' | 'after';
+  } | null>(null);
 
   const activeCard = card;
   const dueInfo = formatDueDateLabel(dueDate);
@@ -170,6 +180,46 @@ function CardDetailModalContent({
           <View style={[styles.header, { borderBottomColor: colors.line }]}>
             <Text style={[styles.headerTitle, { color: colors.muted }]}>Карточка</Text>
             <View style={styles.headerActions}>
+              {columns.length > 1 ? (
+                <View style={styles.reorderGroup}>
+                  {(() => {
+                    const colIdx = columns.findIndex((c) => c.id === activeCard.columnId);
+                    const prevCol = colIdx > 0 ? columns[colIdx - 1] : null;
+                    const nextCol =
+                      colIdx >= 0 && colIdx < columns.length - 1 ? columns[colIdx + 1] : null;
+                    return (
+                      <>
+                        <RipplePressable
+                          accessibilityLabel="В левую колонку"
+                          disabled={!prevCol}
+                          onPress={() => {
+                            if (prevCol) onMoveColumn(activeCard.id, prevCol.id);
+                          }}
+                          style={StyleSheet.flatten([
+                            styles.smallIconBtn,
+                            { backgroundColor: colors.surfaceSubtle },
+                            !prevCol ? styles.disabledBtn : null,
+                          ])}>
+                          <AppIcon name="chevronLeft" size="sm" color={colors.text} />
+                        </RipplePressable>
+                        <RipplePressable
+                          accessibilityLabel="В правую колонку"
+                          disabled={!nextCol}
+                          onPress={() => {
+                            if (nextCol) onMoveColumn(activeCard.id, nextCol.id);
+                          }}
+                          style={StyleSheet.flatten([
+                            styles.smallIconBtn,
+                            { backgroundColor: colors.surfaceSubtle },
+                            !nextCol ? styles.disabledBtn : null,
+                          ])}>
+                          <AppIcon name="chevronRight" size="sm" color={colors.text} />
+                        </RipplePressable>
+                      </>
+                    );
+                  })()}
+                </View>
+              ) : null}
               {columnCardCount > 1 ? (
                 <View style={styles.reorderGroup}>
                   <RipplePressable
@@ -181,7 +231,7 @@ function CardDetailModalContent({
                       { backgroundColor: colors.surfaceSubtle },
                       cardIndex <= 0 ? styles.disabledBtn : null,
                     ])}>
-                    <Text style={[styles.smallIconText, { color: colors.text }]}>↑</Text>
+                    <AppIcon name="arrowUp" size="sm" color={colors.text} />
                   </RipplePressable>
                   <RipplePressable
                     accessibilityLabel="Опустить ниже"
@@ -192,7 +242,7 @@ function CardDetailModalContent({
                       { backgroundColor: colors.surfaceSubtle },
                       cardIndex >= columnCardCount - 1 ? styles.disabledBtn : null,
                     ])}>
-                    <Text style={[styles.smallIconText, { color: colors.text }]}>↓</Text>
+                    <AppIcon name="arrowDown" size="sm" color={colors.text} />
                   </RipplePressable>
                 </View>
               ) : null}
@@ -394,41 +444,117 @@ function CardDetailModalContent({
               ) : null}
 
               <View style={styles.subtaskList}>
-                {activeCard.subtasks.map((item) => (
-                  <Animated.View
-                    key={item.id}
-                    entering={FadeInDown.duration(140)}
-                    exiting={FadeOut.duration(120)}
-                    layout={LinearTransition.springify().damping(24).stiffness(260)}
-                    style={[styles.subtaskRow, { backgroundColor: colors.surfaceSubtle }]}>
-                    <RipplePressable
-                      onPress={() => onToggleSubtask(activeCard.id, item.id, !item.isDone)}
-                      style={styles.subtaskMain}>
-                      <View
-                        style={[
-                          styles.checkbox,
-                          { borderColor: item.isDone ? colors.success : colors.muted },
-                          item.isDone ? { backgroundColor: colors.success } : null,
-                        ]}>
-                        {item.isDone ? <Text style={styles.checkmark}>✓</Text> : null}
-                      </View>
-                      <Text
-                        style={[
-                          styles.subtaskTitle,
-                          { color: item.isDone ? colors.muted : colors.text },
-                          item.isDone ? styles.subtaskDone : null,
-                        ]}>
-                        {item.title}
-                      </Text>
-                    </RipplePressable>
-                    <RipplePressable
-                      accessibilityLabel="Удалить подзадачу"
-                      onPress={() => onDeleteSubtask(activeCard.id, item.id)}
-                      style={styles.subtaskDelete}>
-                      <Text style={[styles.subtaskDeleteText, { color: colors.muted }]}>×</Text>
-                    </RipplePressable>
-                  </Animated.View>
-                ))}
+                {activeCard.subtasks.map((item) => {
+                  const dropPos =
+                    subtaskDrop?.subtaskId === item.id ? subtaskDrop.position : null;
+                  return (
+                    <Animated.View
+                      key={item.id}
+                      entering={FadeInDown.duration(140)}
+                      exiting={FadeOut.duration(120)}
+                      layout={LinearTransition.springify().damping(24).stiffness(260)}
+                      style={[
+                        styles.subtaskWrap,
+                        draggingSubtaskId === item.id ? styles.subtaskDragging : null,
+                      ]}>
+                      {dropPos === 'before' ? (
+                        <View style={styles.subtaskDropLine} />
+                      ) : null}
+                      <WebDragBox
+                        draggable={Platform.OS === 'web' && Boolean(onReorderSubtasks)}
+                        onDragStart={(event) => {
+                          event.stopPropagation();
+                          if (event.dataTransfer) {
+                            event.dataTransfer.setData('text/sotaq-subtask', item.id);
+                            event.dataTransfer.effectAllowed = 'move';
+                          }
+                          setDraggingSubtaskId(item.id);
+                        }}
+                        onDragEnd={() => {
+                          setDraggingSubtaskId(null);
+                          setSubtaskDrop(null);
+                        }}
+                        onDragOver={(event) => {
+                          if (!draggingSubtaskId || draggingSubtaskId === item.id) return;
+                          event.preventDefault();
+                          if (event.dataTransfer) {
+                            event.dataTransfer.dropEffect = 'move';
+                          }
+                          const target = event.currentTarget as HTMLElement | null;
+                          const rect = target?.getBoundingClientRect?.();
+                          const pos: 'before' | 'after' =
+                            rect && event.clientY - rect.top < rect.height * 0.5
+                              ? 'before'
+                              : 'after';
+                          setSubtaskDrop((prev) =>
+                            prev?.subtaskId === item.id && prev.position === pos
+                              ? prev
+                              : { subtaskId: item.id, position: pos },
+                          );
+                        }}
+                        onDragLeave={() => {
+                          setSubtaskDrop((prev) => (prev?.subtaskId === item.id ? null : prev));
+                        }}
+                        onDrop={(event) => {
+                          if (!draggingSubtaskId || !onReorderSubtasks) return;
+                          event.preventDefault();
+                          const draggedId =
+                            event.dataTransfer?.getData('text/sotaq-subtask') ||
+                            draggingSubtaskId;
+                          const pos = dropPos ?? 'after';
+                          setDraggingSubtaskId(null);
+                          setSubtaskDrop(null);
+                          if (!draggedId || draggedId === item.id) return;
+                          const remaining = activeCard.subtasks.filter(
+                            (s) => s.id !== draggedId,
+                          );
+                          const targetIdx = remaining.findIndex((s) => s.id === item.id);
+                          if (targetIdx === -1) return;
+                          const ordered = remaining.map((s) => s.id);
+                          ordered.splice(pos === 'before' ? targetIdx : targetIdx + 1, 0, draggedId);
+                          onReorderSubtasks(activeCard.id, ordered);
+                        }}
+                        style={[styles.subtaskRow, { backgroundColor: colors.surfaceSubtle }]}>
+                        {Platform.OS === 'web' && onReorderSubtasks ? (
+                          <View style={styles.subtaskGrip}>
+                            <AppIcon name="grip" size="xs" color={colors.muted} />
+                          </View>
+                        ) : null}
+                        <RipplePressable
+                          onPress={() => onToggleSubtask(activeCard.id, item.id, !item.isDone)}
+                          style={styles.subtaskMain}>
+                          <View
+                            style={[
+                              styles.checkbox,
+                              { borderColor: item.isDone ? colors.success : colors.muted },
+                              item.isDone ? { backgroundColor: colors.success } : null,
+                            ]}>
+                            {item.isDone ? (
+                              <AppIcon name="check" size={12} color="#FFFFFF" strokeWidth={2.5} />
+                            ) : null}
+                          </View>
+                          <Text
+                            style={[
+                              styles.subtaskTitle,
+                              { color: item.isDone ? colors.muted : colors.text },
+                              item.isDone ? styles.subtaskDone : null,
+                            ]}>
+                            {item.title}
+                          </Text>
+                        </RipplePressable>
+                        <RipplePressable
+                          accessibilityLabel="Удалить подзадачу"
+                          onPress={() => onDeleteSubtask(activeCard.id, item.id)}
+                          style={styles.subtaskDelete}>
+                          <AppIcon name="close" size="xs" color={colors.muted} />
+                        </RipplePressable>
+                      </WebDragBox>
+                      {dropPos === 'after' ? (
+                        <View style={styles.subtaskDropLine} />
+                      ) : null}
+                    </Animated.View>
+                  );
+                })}
               </View>
 
               <View
@@ -453,7 +579,7 @@ function CardDetailModalContent({
                     { backgroundColor: colors.surface },
                     subtaskDraft.trim().length === 0 ? styles.disabledBtn : null,
                   ])}>
-                  <Text style={[styles.subtaskAddLabel, { color: colors.text }]}>+</Text>
+                  <AppIcon name="plus" size="sm" color={colors.text} />
                 </RipplePressable>
               </View>
             </View>
@@ -476,6 +602,21 @@ function CardDetailModalContent({
             </RipplePressable>
           </View>
         </Animated.View>
+
+        <DragTrashZone
+          visible={draggingSubtaskId !== null}
+          label="Удалить подзадачу"
+          colors={colors}
+          onDropDelete={(event) => {
+            const subId =
+              event.dataTransfer?.getData('text/sotaq-subtask') || draggingSubtaskId;
+            setDraggingSubtaskId(null);
+            setSubtaskDrop(null);
+            if (subId) {
+              onDeleteSubtask(activeCard.id, subId);
+            }
+          }}
+        />
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -644,6 +785,22 @@ const styles = StyleSheet.create({
   },
   subtaskList: {
     gap: 6,
+  },
+  subtaskWrap: {
+    gap: 3,
+  },
+  subtaskDragging: {
+    opacity: 0.35,
+  },
+  subtaskDropLine: {
+    height: 2,
+    borderRadius: 2,
+    backgroundColor: '#2383E2',
+    marginHorizontal: 4,
+  },
+  subtaskGrip: {
+    paddingLeft: 8,
+    ...(Platform.OS === 'web' ? ({ cursor: 'grab' } as object) : null),
   },
   subtaskRow: {
     flexDirection: 'row',

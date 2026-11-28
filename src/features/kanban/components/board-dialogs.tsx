@@ -228,9 +228,16 @@ function ColumnDialogContent({
                   key={swatch}
                   accessibilityLabel={`Цвет ${swatch}`}
                   onPress={() => setAccent(swatch)}
-                  style={[
+                  style={({ hovered }: { hovered?: boolean }) => [
                     styles.swatchOuter,
-                    selected ? { borderColor: colors.text } : { borderColor: 'transparent' },
+                    {
+                      borderColor: selected
+                        ? colors.text
+                        : hovered
+                          ? colors.muted
+                          : 'transparent',
+                      transform: hovered ? [{ scale: 1.1 }] : undefined,
+                    },
                   ]}>
                   <View style={[styles.swatchInner, { backgroundColor: swatch }]} />
                 </Pressable>

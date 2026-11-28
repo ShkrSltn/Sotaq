@@ -7,7 +7,7 @@ import {
 import type { BoardColumnOption } from '@/features/todos/todos-repository';
 import type { TodoItemRecord, TodoListRecord } from '@/features/todos/types';
 
-export type CalendarViewMode = 'week' | 'month';
+export type CalendarViewMode = 'day' | 'week' | 'month';
 export type CalendarSourceFilter = 'all' | 'todo' | 'kanban';
 
 export type CalendarItem = {
@@ -42,6 +42,29 @@ export type CalendarDayCell = {
 };
 
 const WEEKDAYS_SHORT = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'] as const;
+const WEEKDAYS_FULL = [
+  'Воскресенье',
+  'Понедельник',
+  'Вторник',
+  'Среда',
+  'Четверг',
+  'Пятница',
+  'Суббота',
+] as const;
+const MONTHS_GENITIVE = [
+  'января',
+  'февраля',
+  'марта',
+  'апреля',
+  'мая',
+  'июня',
+  'июля',
+  'августа',
+  'сентября',
+  'октября',
+  'ноября',
+  'декабря',
+] as const;
 const MONTHS_SHORT = [
   'янв',
   'фев',
@@ -72,6 +95,106 @@ const MONTHS_FULL = [
 ] as const;
 
 export const CALENDAR_WEEKDAYS = WEEKDAYS_SHORT;
+
+export function getTodayDateKey(): string {
+  return toDateKey(new Date());
+}
+
+export function getTomorrowDateKey(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return toDateKey(d);
+}
+
+export function formatShortDateRu(dateKey: string | null): string {
+  if (!dateKey) {
+    return '';
+  }
+  const todayKey = getTodayDateKey();
+  const tomorrowKey = getTomorrowDateKey();
+  if (dateKey === todayKey) {
+    return 'сегодня';
+  }
+  if (dateKey === tomorrowKey) {
+    return 'завтра';
+  }
+  const parts = dateKey.split('-');
+  if (parts.length !== 3) {
+    return dateKey;
+  }
+  const monthIdx = Number(parts[1]) - 1;
+  const dayNum = Number(parts[2]);
+  if (monthIdx < 0 || monthIdx > 11 || Number.isNaN(dayNum)) {
+    return dateKey;
+  }
+  return `${dayNum} ${MONTHS_SHORT[monthIdx]}`;
+}
+
+export function getDayOffsetForDateKey(dateKey: string): number {
+  const parts = dateKey.split('-').map(Number);
+  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) {
+    return 0;
+  }
+  const today = new Date();
+  const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  const targetUtc = Date.UTC(parts[0], parts[1] - 1, parts[2]);
+  return Math.round((targetUtc - todayUtc) / 86400000);
+}
+
+export function buildDayView(dayOffset: number): {
+  day: CalendarDayCell;
+  weekStrip: CalendarDayCell[];
+  title: string;
+  fullHeading: string;
+  weekdayFull: string;
+} {
+  const today = new Date();
+  const todayKey = toDateKey(today);
+  const target = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate() + dayOffset,
+  );
+  const targetKey = toDateKey(target);
+  const targetJsDay = target.getDay();
+  const targetWeekdayIdx = targetJsDay === 0 ? 6 : targetJsDay - 1;
+
+  const day: CalendarDayCell = {
+    dateKey: targetKey,
+    dayNum: target.getDate(),
+    weekdayShort: WEEKDAYS_SHORT[targetWeekdayIdx],
+    isToday: targetKey === todayKey,
+    isCurrentMonth: true,
+    isWeekend: targetWeekdayIdx >= 5,
+  };
+
+  // Build Monday..Sunday strip for the week containing target day
+  const diffToMonday = targetJsDay === 0 ? -6 : 1 - targetJsDay;
+  const monday = new Date(
+    target.getFullYear(),
+    target.getMonth(),
+    target.getDate() + diffToMonday,
+  );
+  const weekStrip: CalendarDayCell[] = [];
+  for (let i = 0; i < 7; i += 1) {
+    const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
+    const key = toDateKey(d);
+    weekStrip.push({
+      dateKey: key,
+      dayNum: d.getDate(),
+      weekdayShort: WEEKDAYS_SHORT[i],
+      isToday: key === todayKey,
+      isCurrentMonth: d.getMonth() === target.getMonth(),
+      isWeekend: i >= 5,
+    });
+  }
+
+  const title = `${target.getDate()} ${MONTHS_SHORT[target.getMonth()]} ${target.getFullYear()}`;
+  const fullHeading = `${target.getDate()} ${MONTHS_GENITIVE[target.getMonth()]}`;
+  const weekdayFull = WEEKDAYS_FULL[targetJsDay];
+
+  return { day, weekStrip, title, fullHeading, weekdayFull };
+}
 
 export function buildWeekGrid(weekOffset: number): {
   days: CalendarDayCell[];

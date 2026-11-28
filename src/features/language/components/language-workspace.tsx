@@ -15,6 +15,7 @@ import {
   measureAnchor,
 } from '@/components/anchored-popover';
 import { AppIcon } from '@/components/app-icon';
+import { FadeIn as ContentFade, ScreenLoader } from '@/components/screen-loader';
 import { DragTrashZone } from '@/components/drag-trash-zone';
 import { MobileSearchBar } from '@/components/mobile-search-bar';
 import { RipplePressable } from '@/components/ripple-pressable';
@@ -940,17 +941,14 @@ export function LanguageWorkspace() {
   }
 
   if (loading || !activeLanguage) {
-    return (
-      <View style={styles.loadingState}>
-        <ActivityIndicator size="small" color={colors.text} />
-      </View>
-    );
+    return <ScreenLoader />;
   }
 
   const isDraggingAnything = draggingWordId !== null || draggingSentenceId !== null;
   const trashLabel = draggingSentenceId ? 'Удалить предложение' : 'Удалить слово';
 
   return (
+    <ContentFade>
     <View style={[styles.screen, isDesktop ? styles.screenDesktop : styles.screenMobile]}>
       {/* Unified Clean Top Toolbar */}
       <View style={styles.toolbar}>
@@ -1919,6 +1917,7 @@ export function LanguageWorkspace() {
       {/* Undo / Redo & Status Toast */}
       <HistoryToast message={toastMessage} colors={colors} />
     </View>
+    </ContentFade>
   );
 }
 

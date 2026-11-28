@@ -5,6 +5,7 @@ import Svg, { Circle } from 'react-native-svg';
 
 import { AppIcon } from '@/components/app-icon';
 import { RipplePressable } from '@/components/ripple-pressable';
+import { FadeIn as ContentFade, ScreenLoader } from '@/components/screen-loader';
 import { useDatabase } from '@/db/provider';
 import { useAuth } from '@/features/auth/auth-context';
 import { useFocus } from '@/features/focus/focus-context';
@@ -73,6 +74,7 @@ export default function HomeScreen() {
 
   const userId = user?.id ?? '';
   const [data, setData] = useState<HomeDashboardData>(EMPTY_DASHBOARD);
+  const [homeReady, setHomeReady] = useState(false);
   const [quickTask, setQuickTask] = useState('');
   const [submittingTask, setSubmittingTask] = useState(false);
 
@@ -87,6 +89,7 @@ export default function HomeScreen() {
   const refreshHome = useCallback(async () => {
     if (!userId) {
       setData(EMPTY_DASHBOARD);
+      setHomeReady(true);
       return;
     }
     const next = await loadHomeDashboard(db, userId, {
@@ -97,6 +100,7 @@ export default function HomeScreen() {
       language: canLanguage,
     });
     setData(next);
+    setHomeReady(true);
   }, [db, userId, canTodos, canKanban, canHabits, canNotes, canLanguage]);
 
   useFocusEffect(
@@ -691,7 +695,12 @@ export default function HomeScreen() {
     </View>
   ) : null;
 
+  if (!homeReady) {
+    return <ScreenLoader />;
+  }
+
   return (
+    <ContentFade>
     <ScrollView
       style={styles.scroll}
       contentContainerStyle={[
@@ -850,6 +859,7 @@ export default function HomeScreen() {
         )}
       </View>
     </ScrollView>
+    </ContentFade>
   );
 }
 

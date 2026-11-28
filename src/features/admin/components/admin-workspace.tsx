@@ -1,7 +1,6 @@
 import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Platform,
   ScrollView,
   StyleSheet,
@@ -13,6 +12,7 @@ import {
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 
 import { AppIcon } from '@/components/app-icon';
+import { FadeIn as ContentFade, ScreenLoader } from '@/components/screen-loader';
 import { RipplePressable } from '@/components/ripple-pressable';
 import { WORKSPACE_PAGE_PRESETS } from '@/components/workspace-pages-modal';
 import { useDatabase } from '@/db/provider';
@@ -203,14 +203,11 @@ export function AdminWorkspace() {
   }
 
   if (loading || !matrix) {
-    return (
-      <View style={styles.loadingState}>
-        <ActivityIndicator size="small" color={colors.text} />
-      </View>
-    );
+    return <ScreenLoader />;
   }
 
   return (
+    <ContentFade>
     <ScrollView
       style={styles.scroll}
       contentContainerStyle={[
@@ -722,6 +719,7 @@ export function AdminWorkspace() {
         onDelete={handleDeleteUser}
       />
     </ScrollView>
+    </ContentFade>
   );
 }
 

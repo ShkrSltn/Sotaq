@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Modal,
   Platform,
   Pressable,
@@ -13,6 +12,7 @@ import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/app-icon';
+import { FadeIn as ContentFade, ScreenLoader } from '@/components/screen-loader';
 import { RipplePressable } from '@/components/ripple-pressable';
 import { HistoryToast, UndoRedoButtons } from '@/components/undo-redo-bar';
 import { useDatabase } from '@/db/provider';
@@ -409,17 +409,14 @@ export function HabitsWorkspace() {
   }
 
   if (loading) {
-    return (
-      <View style={styles.loadingState}>
-        <ActivityIndicator size="small" color={colors.text} />
-      </View>
-    );
+    return <ScreenLoader />;
   }
 
   const now = new Date();
   const desktopMonthSize = 412;
 
   return (
+    <ContentFade>
     <View style={styles.screen}>
       {/* Top Toolbar */}
       <View
@@ -1163,6 +1160,7 @@ export function HabitsWorkspace() {
 
       <HistoryToast message={toast} colors={colors} />
     </View>
+    </ContentFade>
   );
 }
 

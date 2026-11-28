@@ -1,6 +1,5 @@
 import { type ComponentRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Modal,
   Platform,
   Pressable,
@@ -19,6 +18,7 @@ import {
   measureAnchor,
 } from '@/components/anchored-popover';
 import { AppIcon, type IconName } from '@/components/app-icon';
+import { FadeIn as ContentFade, ScreenLoader } from '@/components/screen-loader';
 import { DragTrashZone } from '@/components/drag-trash-zone';
 import { MobileSearchBar } from '@/components/mobile-search-bar';
 import { RipplePressable } from '@/components/ripple-pressable';
@@ -747,14 +747,11 @@ export function TodoWorkspace() {
   }
 
   if (loading) {
-    return (
-      <View style={styles.loadingState}>
-        <ActivityIndicator size="small" color={colors.text} />
-      </View>
-    );
+    return <ScreenLoader />;
   }
 
   return (
+    <ContentFade>
     <View style={[styles.screen, isDesktop ? styles.screenDesktop : styles.screenMobile]}>
       <View style={[styles.layout, isDesktop ? styles.layoutDesktop : styles.layoutMobile]}>
         {/* Left Navigation Rail (Desktop) OR Clear 2-Tier Strips (Mobile) */}
@@ -1711,6 +1708,7 @@ export function TodoWorkspace() {
 
       <HistoryToast message={historyToast} colors={colors} />
     </View>
+    </ContentFade>
   );
 }
 

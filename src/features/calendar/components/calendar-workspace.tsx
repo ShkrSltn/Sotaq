@@ -1,6 +1,5 @@
 import { type ComponentRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Modal,
   Platform,
   Pressable,
@@ -19,6 +18,7 @@ import {
   measureAnchor,
 } from '@/components/anchored-popover';
 import { AppIcon } from '@/components/app-icon';
+import { FadeIn as ContentFade, ScreenLoader } from '@/components/screen-loader';
 import { DragTrashZone } from '@/components/drag-trash-zone';
 import { RipplePressable } from '@/components/ripple-pressable';
 import { HistoryToast, UndoRedoButtons } from '@/components/undo-redo-bar';
@@ -650,11 +650,7 @@ export function CalendarWorkspace() {
   }
 
   if (loading || !bundle) {
-    return (
-      <View style={styles.loadingState}>
-        <ActivityIndicator size="small" color={colors.text} />
-      </View>
-    );
+    return <ScreenLoader />;
   }
 
   const hasActiveFilter = sourceFilter !== 'all' || hideCompleted;
@@ -669,6 +665,7 @@ export function CalendarWorkspace() {
       : 0;
 
   return (
+    <ContentFade>
     <View style={[styles.screen, isDesktop ? styles.screenDesktop : styles.screenMobile]}>
       {/* Unified Clean Top Toolbar */}
       <View style={styles.toolbar}>
@@ -1995,6 +1992,7 @@ export function CalendarWorkspace() {
 
       <HistoryToast message={toast} colors={colors} />
     </View>
+    </ContentFade>
   );
 }
 

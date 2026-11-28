@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { RipplePressable } from '@/components/ripple-pressable';
 import {
@@ -18,6 +18,7 @@ import {
   getInitializedDatabase,
   isOpfsLockError,
 } from '@/db/client';
+import * as SplashScreen from 'expo-splash-screen';
 import { useThemeColors } from '@/theme/colors';
 
 type DatabaseContextValue = {
@@ -155,14 +156,11 @@ export function DatabaseProvider({ children }: { children: ReactNode }) {
     };
   }, [attempt]);
 
-  if (status === 'loading') {
-    return (
-      <View style={[styles.centered, { backgroundColor: colors.background }]}>
-        <ActivityIndicator size="small" color={colors.text} />
-        <Text style={[styles.loadingText, { color: colors.muted }]}>Загрузка базы данных…</Text>
-      </View>
-    );
-  }
+  useEffect(() => {
+    if (status === 'error' || status === 'yielded') {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [status]);
 
   if (status === 'yielded') {
     return (
@@ -277,9 +275,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
     gap: 12,
-  },
-  loadingText: {
-    fontSize: 14,
   },
   errorCard: {
     width: '100%',

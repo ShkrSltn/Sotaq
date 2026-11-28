@@ -1,6 +1,5 @@
 import { type ComponentRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Platform,
@@ -19,6 +18,7 @@ import {
   measureAnchor,
 } from '@/components/anchored-popover';
 import { AppIcon } from '@/components/app-icon';
+import { FadeIn, ScreenLoader } from '@/components/screen-loader';
 import { DragTrashZone } from '@/components/drag-trash-zone';
 import { MobileSearchBar } from '@/components/mobile-search-bar';
 import { RipplePressable } from '@/components/ripple-pressable';
@@ -797,11 +797,7 @@ export function KanbanWorkspace() {
   }
 
   if (loading || !boardData) {
-    return (
-      <View style={styles.loadingState}>
-        <ActivityIndicator size="small" color={colors.text} />
-      </View>
-    );
+    return <ScreenLoader />;
   }
 
   const useDesktopHorizontalScroll = isDesktop && columns.length > 4;
@@ -896,6 +892,7 @@ export function KanbanWorkspace() {
   });
 
   return (
+    <FadeIn>
     <View style={[styles.screen, isDesktop ? styles.screenDesktop : styles.screenMobile]}>
       {/* Top Header: Desktop Toolbar vs Grouped Mobile Header + Underline Column Tabs */}
       {isDesktop ? (
@@ -1702,6 +1699,7 @@ export function KanbanWorkspace() {
 
       <HistoryToast message={historyToast} colors={colors} />
     </View>
+    </FadeIn>
   );
 }
 

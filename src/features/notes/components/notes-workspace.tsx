@@ -7,7 +7,6 @@ import {
     useState,
 } from "react";
 import {
-    ActivityIndicator,
     Keyboard,
     Platform,
     Pressable,
@@ -24,6 +23,7 @@ import {
     measureAnchor,
 } from "@/components/anchored-popover";
 import { AppIcon } from "@/components/app-icon";
+import { FadeIn as ContentFade, ScreenLoader } from "@/components/screen-loader";
 import { DragTrashZone } from "@/components/drag-trash-zone";
 import { useKeyboardInset } from "@/components/keyboard-avoiding-modal-view";
 import { RipplePressable } from "@/components/ripple-pressable";
@@ -1094,11 +1094,7 @@ export function NotesWorkspace() {
   }
 
   if (loading) {
-    return (
-      <View style={styles.loadingState}>
-        <ActivityIndicator size="small" color={colors.text} />
-      </View>
-    );
+    return <ScreenLoader />;
   }
 
   const showTreePane = isDesktop ? desktopTreeOpen : mobileMode === "tree";
@@ -1133,6 +1129,7 @@ export function NotesWorkspace() {
     : null;
 
   return (
+    <ContentFade>
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <View
         style={[
@@ -2294,6 +2291,7 @@ export function NotesWorkspace() {
 
       <HistoryToast message={historyToast} colors={colors} />
     </View>
+    </ContentFade>
   );
 }
 

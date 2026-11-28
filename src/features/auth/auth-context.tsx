@@ -7,9 +7,8 @@ import {
   useMemo,
   useState,
 } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
-import { useDatabase } from '@/db/provider';
+import { useDatabaseState } from '@/db/provider';
 import {
   authenticateUser,
   buildDefaultUserPagePrefs,
@@ -31,7 +30,6 @@ import {
   type UserRecord,
 } from '@/features/auth/types';
 import type { FeatureKey } from '@/features/registry';
-import { useThemeColors } from '@/theme/colors';
 
 export type AuthStatus = 'loading' | 'needs_setup' | 'unauthenticated' | 'authenticated';
 
@@ -83,8 +81,7 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const db = useDatabase();
-  const colors = useThemeColors();
+  const { db, status: dbStatus } = useDatabaseState();
 
   const [status, setStatus] = useState<AuthStatus>('loading');
   const [user, setUser] = useState<UserRecord | null>(null);
@@ -92,6 +89,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [pagePrefs, setPagePrefs] = useState<UserPagePrefsMap>(() => buildDefaultUserPagePrefs());
 
   const loadState = useCallback(async () => {
+    if (!db) {
+      return;
+    }
     await ensureRoleFeatureDefaults(db);
     const totalUsers = await getUserCount(db);
     if (totalUsers === 0) {
@@ -122,11 +122,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [db]);
 
   useEffect(() => {
+    if (dbStatus !== 'ready' || !db) {
+      return;
+    }
+    const database = db;
     let cancelled = false;
 
     async function boot() {
-      await ensureRoleFeatureDefaults(db);
-      const totalUsers = await getUserCount(db);
+      await ensureRoleFeatureDefaults(database);
+      const totalUsers = await getUserCount(database);
       if (cancelled) {
         return;
       }
@@ -138,7 +142,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const sessionUser = await getCurrentSessionUser(db);
+      const sessionUser = await getCurrentSessionUser(database);
       if (cancelled) {
         return;
       }
@@ -151,8 +155,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       const [allowed, prefs] = await Promise.all([
-        computeEffectiveFeatures(db, sessionUser),
-        getUserPagePrefs(db, sessionUser.id),
+        computeEffectiveFeatures(database, sessionUser),
+        getUserPagePrefs(database, sessionUser.id),
       ]);
       if (cancelled) {
         return;
@@ -168,10 +172,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [db]);
+  }, [db, dbStatus]);
 
   const setupAdmin = useCallback(
     async (input: { username: string; displayName: string; password: string }) => {
+      if (!db) {
+        return;
+      }
       const created = await createFirstAdmin(db, input);
       const [allowed, prefs] = await Promise.all([
         computeEffectiveFeatures(db, created),
@@ -187,6 +194,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (username: string, password: string) => {
+      if (!db) {
+        return;
+      }
       const authed = await authenticateUser(db, username, password);
       const [allowed, prefs] = await Promise.all([
         computeEffectiveFeatures(db, authed),
@@ -201,6 +211,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(async () => {
+    if (!db) {
+      return;
+    }
     await logoutCurrentSession(db);
     setUser(null);
     setAllowedFeatures(EMPTY_FEATURES);
@@ -221,7 +234,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const setMyPageEnabled = useCallback(
     async (key: ControllableFeatureKey, enabled: boolean) => {
-      if (!user) return;
+      if (!user || !db) return;
       const next: UserPagePrefsMap = {
         ...pagePrefs,
         [key]: { ...pagePrefs[key], enabled },
@@ -234,7 +247,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const moveMyPage = useCallback(
     async (key: ControllableFeatureKey, delta: -1 | 1) => {
-      if (!user) return;
+      if (!user || !db) return;
       const sorted = [...CONTROLLABLE_FEATURE_KEYS].sort(
         (a, b) => (pagePrefs[a]?.position ?? 0) - (pagePrefs[b]?.position ?? 0),
       );
@@ -263,7 +276,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const applyMyPagePreset = useCallback(
     async (enabledKeys: readonly ControllableFeatureKey[]) => {
-      if (!user) return;
+      if (!user || !db) return;
       const enabledSet = new Set<ControllableFeatureKey>(enabledKeys);
       const next = { ...pagePrefs };
       for (const key of CONTROLLABLE_FEATURE_KEYS) {
@@ -276,7 +289,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const resetMyPagePrefsAction = useCallback(async () => {
-    if (!user) return;
+    if (!user || !db) return;
     const defaults = buildDefaultUserPagePrefs();
     setPagePrefs(defaults);
     await resetUserPagePrefs(db, user.id);
@@ -291,14 +304,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     [features, status, user],
   );
-
-  if (status === 'loading') {
-    return (
-      <View style={[styles.loading, { backgroundColor: colors.background }]}>
-        <ActivityIndicator size="small" color={colors.text} />
-      </View>
-    );
-  }
 
   return (
     <AuthContext.Provider
@@ -336,11 +341,3 @@ export function useFeatureAccess(key: FeatureKey): boolean {
   const { canAccess } = useAuth();
   return canAccess(key);
 }
-
-const styles = StyleSheet.create({
-  loading: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});

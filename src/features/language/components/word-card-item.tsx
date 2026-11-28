@@ -525,9 +525,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   speakBtn: {
-    width: 26,
-    height: 26,
-    borderRadius: 7,
+    width: 30,
+    height: 30,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },

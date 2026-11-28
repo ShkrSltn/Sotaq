@@ -16,6 +16,7 @@ import {
 } from '@/components/anchored-popover';
 import { AppIcon } from '@/components/app-icon';
 import { DragTrashZone } from '@/components/drag-trash-zone';
+import { MobileSearchBar } from '@/components/mobile-search-bar';
 import { RipplePressable } from '@/components/ripple-pressable';
 import { HistoryToast, UndoRedoButtons } from '@/components/undo-redo-bar';
 import { WebDragBox, type WebDomDragEvent } from '@/components/web-drag-box';
@@ -953,256 +954,252 @@ export function LanguageWorkspace() {
     <View style={[styles.screen, isDesktop ? styles.screenDesktop : styles.screenMobile]}>
       {/* Unified Clean Top Toolbar */}
       <View style={styles.toolbar}>
-        <View style={styles.toolbarLeft}>
-          {/* Language Switcher Pill */}
-          <View ref={langMenuBtnRef} collapsable={false}>
-            <RipplePressable
-              accessibilityLabel="Выбрать или настроить язык"
-              onPress={() => {
-                if (langMenuOpen) {
-                  setLangMenuOpen(false);
-                  return;
-                }
-                measureAnchor(langMenuBtnRef.current, (rect) => {
-                  setLangMenuAnchor(rect);
-                  setLangMenuOpen(true);
-                });
-              }}
-              style={StyleSheet.flatten([
-                styles.langSwitcherBtn,
-                {
-                  backgroundColor: langMenuOpen ? colors.surfaceActive : colors.surface,
-                  borderColor: langMenuOpen ? colors.text : colors.line,
-                },
-              ])}>
-              <AppIcon name="language" size="sm" color={colors.muted} />
-              <Text style={[styles.langCodeTag, { color: colors.muted }]}>
-                {activeLanguage.code.toUpperCase()}
-              </Text>
-              <Text style={[styles.langSwitcherName, { color: colors.text }]} numberOfLines={1}>
-                {activeLanguage.name}
-              </Text>
-              <AppIcon name="chevronDown" size="xs" color={colors.muted} />
-            </RipplePressable>
-          </View>
-
-          {/* Desktop Segmented Tabs */}
-          {isDesktop ? (
-            <View
-              style={[
-                styles.segmentedWrap,
-                { backgroundColor: colors.surface, borderColor: colors.line },
-              ]}>
-              {(
-                [
-                  { key: 'vocab', label: 'Словарь', count: words.length },
-                  { key: 'sentences', label: 'Предложения', count: sentences.length },
-                ] as const
-              ).map((item) => {
-                const active = tab === item.key;
-                return (
-                  <RipplePressable
-                    key={item.key}
-                    onPress={() => setTab(item.key)}
-                    style={StyleSheet.flatten([
-                      styles.segmentBtn,
-                      active ? { backgroundColor: colors.surfaceActive } : null,
-                    ])}>
-                    <Text
-                      style={[
-                        styles.segmentLabel,
-                        { color: active ? colors.text : colors.muted },
-                      ]}>
-                      {item.label}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.segmentCount,
-                        { color: active ? colors.text : colors.muted },
-                      ]}>
-                      {item.count}
-                    </Text>
-                  </RipplePressable>
-                );
-              })}
-            </View>
-          ) : null}
-        </View>
-
-        <View style={styles.toolbarRight}>
-          {isDesktop ? (
-            <>
-              {/* Group 1: Search & Sort */}
-              <View style={styles.toolbarGroup}>
-                <View
-                  style={[
-                    styles.searchBox,
-                    { backgroundColor: colors.surface, borderColor: colors.line },
-                  ]}>
-                  <AppIcon name="search" size="xs" color={colors.muted} />
-                  <TextInput
-                    value={search}
-                    onChangeText={setSearch}
-                    placeholder={tab === 'vocab' ? 'Поиск слов…' : 'Поиск предложений…'}
-                    placeholderTextColor={colors.muted}
-                    style={[styles.searchInput, { color: colors.text }]}
-                  />
-                  {search.length > 0 ? (
-                    <RipplePressable onPress={() => setSearch('')} style={styles.clearBtn}>
-                      <AppIcon name="close" size="xs" color={colors.muted} />
-                    </RipplePressable>
-                  ) : null}
-                </View>
-
-                {tab === 'vocab' ? (
-                  <View ref={sortMenuBtnRef} collapsable={false}>
-                    <RipplePressable
-                      accessibilityLabel="Сортировка словаря"
-                      onPress={() => {
-                        if (sortMenuOpen) {
-                          setSortMenuOpen(false);
-                          return;
-                        }
-                        measureAnchor(sortMenuBtnRef.current, (rect) => {
-                          setSortMenuAnchor(rect);
-                          setSortMenuOpen(true);
-                        });
-                      }}
-                      style={StyleSheet.flatten([
-                        styles.sortTriggerBtn,
-                        {
-                          backgroundColor:
-                            sortMode !== 'manual' || sortMenuOpen
-                              ? colors.surfaceActive
-                              : colors.surface,
-                          borderColor:
-                            sortMode !== 'manual' || sortMenuOpen ? colors.text : colors.line,
-                        },
-                      ])}>
-                      <AppIcon name="reorder" size="xs" color={colors.muted} />
-                      <Text
-                        style={[
-                          styles.sortTriggerText,
-                          { color: sortMode !== 'manual' ? colors.text : colors.muted },
-                        ]}>
-                        {VOCAB_SORT_META[sortMode].label}
-                      </Text>
-                      <AppIcon name="chevronDown" size={11} color={colors.muted} />
-                    </RipplePressable>
-                  </View>
-                ) : null}
+        {!isDesktop && mobileSearchOpen ? (
+          <MobileSearchBar
+            value={search}
+            onChangeText={setSearch}
+            onCancel={() => {
+              setSearch('');
+              setMobileSearchOpen(false);
+            }}
+            placeholder={tab === 'vocab' ? 'Поиск в словаре…' : 'Поиск предложений…'}
+            colors={colors}
+            matchCount={tab === 'vocab' ? filteredWords.length : filteredSentences.length}
+          />
+        ) : (
+          <>
+            <View style={styles.toolbarLeft}>
+              {/* Language Switcher Pill */}
+              <View ref={langMenuBtnRef} collapsable={false}>
+                <RipplePressable
+                  accessibilityLabel="Выбрать или настроить язык"
+                  onPress={() => {
+                    if (langMenuOpen) {
+                      setLangMenuOpen(false);
+                      return;
+                    }
+                    measureAnchor(langMenuBtnRef.current, (rect) => {
+                      setLangMenuAnchor(rect);
+                      setLangMenuOpen(true);
+                    });
+                  }}
+                  style={StyleSheet.flatten([
+                    styles.langSwitcherBtn,
+                    {
+                      backgroundColor: langMenuOpen ? colors.surfaceActive : colors.surface,
+                      borderColor: langMenuOpen ? colors.text : colors.line,
+                    },
+                  ])}>
+                  <AppIcon name="language" size="sm" color={colors.muted} />
+                  <Text style={[styles.langCodeTag, { color: colors.muted }]}>
+                    {activeLanguage.code.toUpperCase()}
+                  </Text>
+                  <Text style={[styles.langSwitcherName, { color: colors.text }]} numberOfLines={1}>
+                    {activeLanguage.name}
+                  </Text>
+                  <AppIcon name="chevronDown" size="xs" color={colors.muted} />
+                </RipplePressable>
               </View>
 
-              <View style={[styles.toolbarDivider, { backgroundColor: colors.line }]} />
-
-              {/* Group 2: Undo / Redo */}
-              <UndoRedoButtons
-                canUndo={historyMeta.canUndo}
-                canRedo={historyMeta.canRedo}
-                colors={colors}
-                onUndo={() => {
-                  handleUndo();
-                }}
-                onRedo={() => {
-                  handleRedo();
-                }}
-              />
-
-              <View style={[styles.toolbarDivider, { backgroundColor: colors.line }]} />
-
-              {/* Group 3: Single Primary CTA */}
-              <RipplePressable
-                onPress={handlePrimaryCTA}
-                style={StyleSheet.flatten([
-                  styles.primaryCtaBtn,
-                  { backgroundColor: colors.accent },
-                ])}>
-                <AppIcon name="plus" size="xs" color={colors.accentText} />
-                <Text style={[styles.primaryCtaText, { color: colors.accentText }]}>
-                  {tab === 'vocab' ? 'Слово' : 'Предложение'}
-                </Text>
-              </RipplePressable>
-            </>
-          ) : (
-            <>
-              {historyMeta.canUndo || historyMeta.canRedo ? (
-                <UndoRedoButtons
-                  compact
-                  canUndo={historyMeta.canUndo}
-                  canRedo={historyMeta.canRedo}
-                  colors={colors}
-                  onUndo={() => {
-                    handleUndo();
-                  }}
-                  onRedo={() => {
-                    handleRedo();
-                  }}
-                />
+              {/* Desktop Segmented Tabs */}
+              {isDesktop ? (
+                <View
+                  style={[
+                    styles.segmentedWrap,
+                    { backgroundColor: colors.surface, borderColor: colors.line },
+                  ]}>
+                  {(
+                    [
+                      { key: 'vocab', label: 'Словарь', count: words.length },
+                      { key: 'sentences', label: 'Предложения', count: sentences.length },
+                    ] as const
+                  ).map((item) => {
+                    const active = tab === item.key;
+                    return (
+                      <RipplePressable
+                        key={item.key}
+                        onPress={() => setTab(item.key)}
+                        style={StyleSheet.flatten([
+                          styles.segmentBtn,
+                          active ? { backgroundColor: colors.surfaceActive } : null,
+                        ])}>
+                        <Text
+                          style={[
+                            styles.segmentLabel,
+                            { color: active ? colors.text : colors.muted },
+                          ]}>
+                          {item.label}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.segmentCount,
+                            { color: active ? colors.text : colors.muted },
+                          ]}>
+                          {item.count}
+                        </Text>
+                      </RipplePressable>
+                    );
+                  })}
+                </View>
               ) : null}
+            </View>
 
-              <RipplePressable
-                accessibilityLabel="Поиск"
-                onPress={() => setMobileSearchOpen((v) => !v)}
-                style={StyleSheet.flatten([
-                  styles.iconPill,
-                  {
-                    backgroundColor:
-                      mobileSearchOpen || search.length > 0
-                        ? colors.surfaceActive
-                        : colors.surface,
-                    borderColor:
-                      mobileSearchOpen || search.length > 0 ? colors.text : colors.line,
-                  },
-                ])}>
-                <AppIcon
-                  name="search"
-                  size="sm"
-                  color={mobileSearchOpen || search.length > 0 ? colors.text : colors.muted}
-                />
-              </RipplePressable>
+            <View style={styles.toolbarRight}>
+              {isDesktop ? (
+                <>
+                  {/* Group 1: Search & Sort */}
+                  <View style={styles.toolbarGroup}>
+                    <View
+                      style={[
+                        styles.searchBox,
+                        { backgroundColor: colors.surface, borderColor: colors.line },
+                      ]}>
+                      <AppIcon name="search" size="xs" color={colors.muted} />
+                      <TextInput
+                        value={search}
+                        onChangeText={setSearch}
+                        placeholder={tab === 'vocab' ? 'Поиск слов…' : 'Поиск предложений…'}
+                        placeholderTextColor={colors.muted}
+                        style={[styles.searchInput, { color: colors.text }]}
+                      />
+                      {search.length > 0 ? (
+                        <RipplePressable onPress={() => setSearch('')} style={styles.clearBtn}>
+                          <AppIcon name="close" size="xs" color={colors.muted} />
+                        </RipplePressable>
+                      ) : null}
+                    </View>
 
-              {tab === 'vocab' ? (
-                <View ref={sortMenuBtnRef} collapsable={false}>
-                  <RipplePressable
-                    accessibilityLabel="Сортировка"
-                    onPress={() => {
-                      measureAnchor(sortMenuBtnRef.current, (rect) => {
-                        setSortMenuAnchor(rect);
-                        setSortMenuOpen(true);
-                      });
+                    {tab === 'vocab' ? (
+                      <View ref={sortMenuBtnRef} collapsable={false}>
+                        <RipplePressable
+                          accessibilityLabel="Сортировка словаря"
+                          onPress={() => {
+                            if (sortMenuOpen) {
+                              setSortMenuOpen(false);
+                              return;
+                            }
+                            measureAnchor(sortMenuBtnRef.current, (rect) => {
+                              setSortMenuAnchor(rect);
+                              setSortMenuOpen(true);
+                            });
+                          }}
+                          style={StyleSheet.flatten([
+                            styles.sortTriggerBtn,
+                            {
+                              backgroundColor:
+                                sortMode !== 'manual' || sortMenuOpen
+                                  ? colors.surfaceActive
+                                  : colors.surface,
+                              borderColor:
+                                sortMode !== 'manual' || sortMenuOpen ? colors.text : colors.line,
+                            },
+                          ])}>
+                          <AppIcon name="reorder" size="xs" color={colors.muted} />
+                          <Text
+                            style={[
+                              styles.sortTriggerText,
+                              { color: sortMode !== 'manual' ? colors.text : colors.muted },
+                            ]}>
+                            {VOCAB_SORT_META[sortMode].label}
+                          </Text>
+                          <AppIcon name="chevronDown" size={11} color={colors.muted} />
+                        </RipplePressable>
+                      </View>
+                    ) : null}
+                  </View>
+
+                  <View style={[styles.toolbarDivider, { backgroundColor: colors.line }]} />
+
+                  {/* Group 2: Undo / Redo */}
+                  <UndoRedoButtons
+                    canUndo={historyMeta.canUndo}
+                    canRedo={historyMeta.canRedo}
+                    colors={colors}
+                    onUndo={() => {
+                      handleUndo();
                     }}
+                    onRedo={() => {
+                      handleRedo();
+                    }}
+                  />
+
+                  <View style={[styles.toolbarDivider, { backgroundColor: colors.line }]} />
+
+                  {/* Group 3: Single Primary CTA */}
+                  <RipplePressable
+                    onPress={handlePrimaryCTA}
+                    style={StyleSheet.flatten([
+                      styles.primaryCtaBtn,
+                      { backgroundColor: colors.accent },
+                    ])}>
+                    <AppIcon name="plus" size="xs" color={colors.accentText} />
+                    <Text style={[styles.primaryCtaText, { color: colors.accentText }]}>
+                      {tab === 'vocab' ? 'Слово' : 'Предложение'}
+                    </Text>
+                  </RipplePressable>
+                </>
+              ) : (
+                <>
+                  {historyMeta.canUndo || historyMeta.canRedo ? (
+                    <UndoRedoButtons
+                      compact
+                      canUndo={historyMeta.canUndo}
+                      canRedo={historyMeta.canRedo}
+                      colors={colors}
+                      onUndo={() => {
+                        handleUndo();
+                      }}
+                      onRedo={() => {
+                        handleRedo();
+                      }}
+                    />
+                  ) : null}
+
+                  {tab === 'vocab' && words.length > 0 ? (
+                    <RipplePressable
+                      accessibilityLabel="Тренировка флеш-карточек"
+                      onPress={() => setStudyOpen(true)}
+                      style={StyleSheet.flatten([
+                        styles.iconPill,
+                        {
+                          backgroundColor: colors.surface,
+                          borderColor: dueReviewCount > 0 ? colors.text : colors.line,
+                        },
+                      ])}>
+                      <AppIcon name="study" size="sm" color={colors.text} />
+                    </RipplePressable>
+                  ) : null}
+
+                  <RipplePressable
+                    accessibilityLabel="Поиск"
+                    onPress={() => setMobileSearchOpen(true)}
                     style={StyleSheet.flatten([
                       styles.iconPill,
                       {
-                        backgroundColor:
-                          sortMode !== 'manual' ? colors.surfaceActive : colors.surface,
-                        borderColor: sortMode !== 'manual' ? colors.text : colors.line,
+                        backgroundColor: colors.surface,
+                        borderColor: colors.line,
                       },
                     ])}>
-                    <AppIcon
-                      name="reorder"
-                      size="sm"
-                      color={sortMode !== 'manual' ? colors.text : colors.muted}
-                    />
+                    <AppIcon name="search" size="sm" color={colors.muted} />
                   </RipplePressable>
-                </View>
-              ) : null}
 
-              <RipplePressable
-                accessibilityLabel={tab === 'vocab' ? 'Новое слово' : 'Новое предложение'}
-                onPress={handlePrimaryCTA}
-                style={StyleSheet.flatten([
-                  styles.iconPill,
-                  { backgroundColor: colors.accent, borderColor: colors.accent },
-                ])}>
-                <AppIcon name="plus" size="sm" color={colors.accentText} />
-              </RipplePressable>
-            </>
-          )}
-        </View>
+                  <RipplePressable
+                    accessibilityLabel={tab === 'vocab' ? 'Новое слово' : 'Новое предложение'}
+                    onPress={handlePrimaryCTA}
+                    style={StyleSheet.flatten([
+                      styles.iconPill,
+                      { backgroundColor: colors.accent, borderColor: colors.accent },
+                    ])}>
+                    <AppIcon name="plus" size="sm" color={colors.accentText} />
+                  </RipplePressable>
+                </>
+              )}
+            </View>
+          </>
+        )}
       </View>
 
-      {/* Mobile Tabs + Collapsible Search */}
+      {/* Mobile Tabs */}
       {!isDesktop ? (
         <View style={styles.mobileSubBar}>
           <View
@@ -1245,30 +1242,6 @@ export function LanguageWorkspace() {
               );
             })}
           </View>
-
-          {mobileSearchOpen ? (
-            <View
-              style={[
-                styles.searchBox,
-                styles.searchBoxFull,
-                { backgroundColor: colors.surface, borderColor: colors.line },
-              ]}>
-              <AppIcon name="search" size="xs" color={colors.muted} />
-              <TextInput
-                autoFocus
-                value={search}
-                onChangeText={setSearch}
-                placeholder={tab === 'vocab' ? 'Поиск в словаре…' : 'Поиск предложений…'}
-                placeholderTextColor={colors.muted}
-                style={[styles.searchInput, { color: colors.text }]}
-              />
-              {search.length > 0 ? (
-                <RipplePressable onPress={() => setSearch('')} style={styles.clearBtn}>
-                  <AppIcon name="close" size="xs" color={colors.muted} />
-                </RipplePressable>
-              ) : null}
-            </View>
-          ) : null}
         </View>
       ) : null}
 
@@ -1378,7 +1351,7 @@ export function LanguageWorkspace() {
                   })}
                 </ScrollView>
 
-                {words.length > 0 ? (
+                {words.length > 0 && isDesktop ? (
                   <View style={styles.statusRightGroup}>
                     <View style={styles.progressWrap}>
                       <Text style={[styles.progressText, { color: colors.muted }]}>
@@ -1408,6 +1381,17 @@ export function LanguageWorkspace() {
                   </View>
                 ) : null}
               </View>
+
+              {!isDesktop && words.length > 0 ? (
+                <View style={[styles.mobileMasteryTrack, { backgroundColor: colors.surfaceSubtle }]}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      { width: `${masteryPct}%`, backgroundColor: colors.success },
+                    ]}
+                  />
+                </View>
+              ) : null}
 
               {/* Active / Filtered Words Grid */}
               {activeWords.length === 0 ? (
@@ -2049,14 +2033,12 @@ const styles = StyleSheet.create({
     paddingLeft: 10,
     paddingRight: 4,
   },
-  searchBoxFull: {
-    width: '100%',
-  },
   searchInput: {
     flex: 1,
     fontSize: 13,
     paddingVertical: 4,
     minWidth: 0,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
   },
   clearBtn: {
     width: 22,
@@ -2180,6 +2162,13 @@ const styles = StyleSheet.create({
     height: 5,
     borderRadius: 3,
     overflow: 'hidden',
+  },
+  mobileMasteryTrack: {
+    width: '100%',
+    height: 3,
+    borderRadius: 2,
+    overflow: 'hidden',
+    marginTop: -6,
   },
   progressFill: {
     height: '100%',

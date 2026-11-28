@@ -1,0 +1,159 @@
+import {
+  AlignLeft,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ArrowUpDown,
+  Calendar,
+  Check,
+  CheckCircle2,
+  CheckSquare,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Circle,
+  Clock,
+  Code2,
+  Copy,
+  CornerLeftUp,
+  FilePlus2,
+  FileText,
+  FolderInput,
+  GripVertical,
+  Heading1,
+  Heading2,
+  Heading3,
+  Heading4,
+  Home,
+  Image,
+  IndentDecrease,
+  IndentIncrease,
+  Kanban,
+  KeyboardOff,
+  Languages,
+  Lightbulb,
+  List,
+  ListOrdered,
+  LogOut,
+  Maximize2,
+  Minimize2,
+  Minus,
+  MoreHorizontal,
+  PanelLeft,
+  Pencil,
+  Plus,
+  Quote,
+  Redo2,
+  Repeat2,
+  Search,
+  Settings,
+  SlidersHorizontal,
+  Sparkles,
+  Star,
+  Sun,
+  Trash2,
+  Type,
+  Undo2,
+  X,
+} from 'lucide-react-native';
+
+export const ICONS = {
+  home: Home,
+  kanban: Kanban,
+  todos: CheckSquare,
+  notes: FileText,
+  language: Languages,
+  admin: Settings,
+  plus: Plus,
+  grip: GripVertical,
+  search: Search,
+  star: Star,
+  more: MoreHorizontal,
+  close: X,
+  check: Check,
+  checkCircle: CheckCircle2,
+  circle: Circle,
+  chevronRight: ChevronRight,
+  chevronDown: ChevronDown,
+  chevronLeft: ChevronLeft,
+  chevronUp: ChevronUp,
+  arrowUp: ArrowUp,
+  arrowDown: ArrowDown,
+  arrowRight: ArrowRight,
+  arrowLeft: ArrowLeft,
+  reorder: ArrowUpDown,
+  indent: IndentIncrease,
+  outdent: IndentDecrease,
+  copy: Copy,
+  trash: Trash2,
+  edit: Pencil,
+  logout: LogOut,
+  sidebar: PanelLeft,
+  sparkles: Sparkles,
+  calendar: Calendar,
+  sun: Sun,
+  clock: Clock,
+  list: List,
+  listOrdered: ListOrdered,
+  alignLeft: AlignLeft,
+  text: Type,
+  h1: Heading1,
+  h2: Heading2,
+  h3: Heading3,
+  h4: Heading4,
+  quote: Quote,
+  callout: Lightbulb,
+  code: Code2,
+  divider: Minus,
+  rootUp: CornerLeftUp,
+  maximize: Maximize2,
+  minimize: Minimize2,
+  cover: Image,
+  keyboardOff: KeyboardOff,
+  turnInto: Repeat2,
+  filter: SlidersHorizontal,
+  filePlus: FilePlus2,
+  moveFolder: FolderInput,
+  undo: Undo2,
+  redo: Redo2,
+} as const;
+
+export type IconName = keyof typeof ICONS;
+export type IconSize = 'xs' | 'sm' | 'md' | 'lg';
+
+const ICON_SIZES: Record<IconSize, number> = {
+  xs: 13,
+  sm: 15,
+  md: 18,
+  lg: 20,
+};
+
+type Props = {
+  name: IconName;
+  color: string;
+  size?: IconSize | number;
+  strokeWidth?: number;
+  fill?: string;
+};
+
+export function AppIcon({
+  name,
+  color,
+  size = 'md',
+  strokeWidth = 1.85,
+  fill = 'none',
+}: Props) {
+  const IconComponent = ICONS[name];
+  const resolvedSize = typeof size === 'number' ? size : ICON_SIZES[size];
+
+  return (
+    <IconComponent
+      size={resolvedSize}
+      color={color}
+      strokeWidth={strokeWidth}
+      fill={fill}
+    />
+  );
+}

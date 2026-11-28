@@ -48,6 +48,13 @@ function resolveStateLayerColors(
   return { hover: 'rgba(22, 24, 29, 0.06)', press: 'rgba(22, 24, 29, 0.11)' };
 }
 
+function supportsWebHover(): boolean {
+  if (Platform.OS !== 'web' || typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return false;
+  }
+  return window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+}
+
 // Android uses the system ink ripple. Web draws hover/press state layers + press wave.
 export const RipplePressable = forwardRef<ComponentRef<typeof Pressable>, Props>(
   function RipplePressable(
@@ -113,7 +120,7 @@ export const RipplePressable = forwardRef<ComponentRef<typeof Pressable>, Props>
         {...rest}>
         {(pressState) => {
           const hovered =
-            Platform.OS === 'web' &&
+            supportsWebHover() &&
             !disabled &&
             !disableHover &&
             (pressState as { hovered?: boolean }).hovered === true;

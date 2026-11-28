@@ -234,11 +234,12 @@ export function AppShell({ children }: { children: ReactNode }) {
           return (
             <RipplePressable
               key={feature.key}
+              disableHover
               accessibilityLabel={feature.title}
               onPress={() => navigateTo(feature)}
               style={StyleSheet.flatten([
                 styles.mobileTab,
-                active ? { backgroundColor: colors.surfaceActive } : null,
+                { backgroundColor: active ? colors.surfaceActive : 'transparent' },
               ])}>
               <AppIcon
                 name={feature.icon}
@@ -255,11 +256,17 @@ export function AppShell({ children }: { children: ReactNode }) {
         })}
 
         <RipplePressable
+          disableHover
           accessibilityLabel="Ещё разделы"
           onPress={() => setMoreOpen(true)}
-          style={styles.mobileTab}>
-          <AppIcon name="more" size="md" color={colors.muted} />
-          <Text style={[styles.mobileTabLabel, { color: colors.muted }]}>Ещё</Text>
+          style={StyleSheet.flatten([
+            styles.mobileTab,
+            { backgroundColor: moreOpen ? colors.surfaceActive : 'transparent' },
+          ])}>
+          <AppIcon name="more" size="md" color={moreOpen ? colors.text : colors.muted} />
+          <Text style={[styles.mobileTabLabel, { color: moreOpen ? colors.text : colors.muted }]}>
+            Ещё
+          </Text>
         </RipplePressable>
       </View>
 

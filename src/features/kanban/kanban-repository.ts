@@ -3,6 +3,8 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import { createId, nowIso } from '@/db/client';
 import {
   COLUMN_ACCENTS,
+  type KanbanBoardColorDraft,
+  type KanbanBoardColorRecord,
   type KanbanBoardData,
   type KanbanBoardRecord,
   type KanbanCardRecord,
@@ -38,9 +40,19 @@ type CardRow = {
   description: string;
   priority: string;
   due_date: string | null;
+  color_id: string | null;
   position: number;
   created_at: string;
   updated_at: string;
+};
+
+type BoardColorRow = {
+  id: string;
+  board_id: string;
+  name: string;
+  color: string;
+  position: number;
+  created_at: string;
 };
 
 type SubtaskRow = {
@@ -70,6 +82,17 @@ function mapColumn(row: ColumnRow): KanbanColumnRecord {
     accent: row.accent,
     position: row.position,
     isDoneColumn: row.is_done_column === 1,
+    createdAt: row.created_at,
+  };
+}
+
+function mapBoardColor(row: BoardColorRow): KanbanBoardColorRecord {
+  return {
+    id: row.id,
+    boardId: row.board_id,
+    name: row.name,
+    color: row.color,
+    position: row.position,
     createdAt: row.created_at,
   };
 }
@@ -210,7 +233,7 @@ export async function loadBoardData(
     return null;
   }
 
-  const [columnRows, cardRows, subtaskRows] = await Promise.all([
+  const [columnRows, cardRows, subtaskRows, colorRows] = await Promise.all([
     db.getAllAsync<ColumnRow>(
       'SELECT * FROM kanban_columns WHERE board_id = ? ORDER BY position ASC, created_at ASC;',
       boardId,
@@ -224,6 +247,10 @@ export async function loadBoardData(
        INNER JOIN kanban_cards c ON c.id = s.card_id
        WHERE c.board_id = ?
        ORDER BY s.position ASC;`,
+      boardId,
+    ),
+    db.getAllAsync<BoardColorRow>(
+      'SELECT * FROM kanban_board_colors WHERE board_id = ? ORDER BY position ASC, created_at ASC;',
       boardId,
     ),
   ]);
@@ -249,6 +276,7 @@ export async function loadBoardData(
     description: row.description,
     priority: normalizePriority(row.priority),
     dueDate: row.due_date,
+    colorId: row.color_id ?? null,
     position: row.position,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -259,6 +287,7 @@ export async function loadBoardData(
     board: mapBoard(boardRow),
     columns: columnRows.map(mapColumn),
     cards,
+    colors: colorRows.map(mapBoardColor),
   };
 }
 
@@ -333,6 +362,77 @@ export async function renameBoard(db: SQLiteDatabase, boardId: string, title: st
 
 export async function deleteBoard(db: SQLiteDatabase, boardId: string): Promise<void> {
   await db.runAsync('DELETE FROM kanban_boards WHERE id = ?;', boardId);
+}
+
+export async function saveBoardColors(
+  db: SQLiteDatabase,
+  boardId: string,
+  drafts: KanbanBoardColorDraft[],
+): Promise<KanbanBoardColorRecord[]> {
+  const now = nowIso();
+
+  await db.withTransactionAsync(async () => {
+    const existingRows = await db.getAllAsync<{ id: string }>(
+      'SELECT id FROM kanban_board_colors WHERE board_id = ?;',
+      boardId,
+    );
+    const existingIds = new Set(existingRows.map((row) => row.id));
+    const keptIds = new Set<string>();
+
+    for (let index = 0; index < drafts.length; index += 1) {
+      const item = drafts[index];
+      const cleanName = item.name.trim();
+      const cleanColor = item.color.trim();
+
+      if (item.id && existingIds.has(item.id)) {
+        keptIds.add(item.id);
+        await db.runAsync(
+          `UPDATE kanban_board_colors
+           SET name = ?, color = ?, position = ?
+           WHERE id = ? AND board_id = ?;`,
+          cleanName,
+          cleanColor,
+          index,
+          item.id,
+          boardId,
+        );
+      } else {
+        const nextId = createId();
+        keptIds.add(nextId);
+        await db.runAsync(
+          `INSERT INTO kanban_board_colors (id, board_id, name, color, position, created_at)
+           VALUES (?, ?, ?, ?, ?, ?);`,
+          nextId,
+          boardId,
+          cleanName,
+          cleanColor,
+          index,
+          now,
+        );
+      }
+    }
+
+    for (const oldId of existingIds) {
+      if (!keptIds.has(oldId)) {
+        await db.runAsync(
+          'UPDATE kanban_cards SET color_id = NULL WHERE board_id = ? AND color_id = ?;',
+          boardId,
+          oldId,
+        );
+        await db.runAsync(
+          'DELETE FROM kanban_board_colors WHERE id = ? AND board_id = ?;',
+          oldId,
+          boardId,
+        );
+      }
+    }
+  });
+
+  const rows = await db.getAllAsync<BoardColorRow>(
+    'SELECT * FROM kanban_board_colors WHERE board_id = ? ORDER BY position ASC, created_at ASC;',
+    boardId,
+  );
+  return rows.map(mapBoardColor);
 }
 
 export async function createColumn(
@@ -423,6 +523,7 @@ export async function createCard(
     description?: string;
     priority?: KanbanPriority;
     dueDate?: string | null;
+    colorId?: string | null;
     subtasks?: string[];
   },
 ): Promise<KanbanCardRecord> {
@@ -436,6 +537,7 @@ export async function createCard(
   const priority = input.priority ?? 'medium';
   const description = input.description?.trim() ?? '';
   const dueDate = input.dueDate ?? null;
+  const colorId = input.colorId ?? null;
   const cleanSubtasks = (input.subtasks ?? [])
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
@@ -444,8 +546,8 @@ export async function createCard(
   await db.withTransactionAsync(async () => {
     await db.runAsync(
       `INSERT INTO kanban_cards
-         (id, board_id, column_id, title, description, priority, due_date, position, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+         (id, board_id, column_id, title, description, priority, due_date, color_id, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       id,
       input.boardId,
       input.columnId,
@@ -453,6 +555,7 @@ export async function createCard(
       description,
       priority,
       dueDate,
+      colorId,
       position,
       now,
       now,
@@ -485,6 +588,7 @@ export async function createCard(
     description,
     priority,
     dueDate,
+    colorId,
     position,
     createdAt: now,
     updatedAt: now,
@@ -500,6 +604,7 @@ export async function updateCard(
     description?: string;
     priority?: KanbanPriority;
     dueDate?: string | null;
+    colorId?: string | null;
   },
 ): Promise<void> {
   const existing = await db.getFirstAsync<CardRow>(
@@ -512,12 +617,13 @@ export async function updateCard(
 
   await db.runAsync(
     `UPDATE kanban_cards
-     SET title = ?, description = ?, priority = ?, due_date = ?, updated_at = ?
+     SET title = ?, description = ?, priority = ?, due_date = ?, color_id = ?, updated_at = ?
      WHERE id = ?;`,
     patch.title !== undefined ? patch.title.trim() : existing.title,
     patch.description !== undefined ? patch.description : existing.description,
     patch.priority !== undefined ? patch.priority : existing.priority,
     patch.dueDate !== undefined ? patch.dueDate : existing.due_date,
+    patch.colorId !== undefined ? patch.colorId : existing.color_id,
     nowIso(),
     cardId,
   );
@@ -671,8 +777,8 @@ export async function restoreBoardSnapshot(
     for (const card of snapshot.cards) {
       await db.runAsync(
         `INSERT INTO kanban_cards
-           (id, board_id, column_id, title, description, priority, due_date, position, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+           (id, board_id, column_id, title, description, priority, due_date, color_id, position, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
         card.id,
         boardId,
         card.columnId,
@@ -680,6 +786,7 @@ export async function restoreBoardSnapshot(
         card.description,
         card.priority,
         card.dueDate,
+        card.colorId ?? null,
         card.position,
         card.createdAt,
         card.updatedAt,

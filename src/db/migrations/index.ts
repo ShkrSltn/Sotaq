@@ -12,6 +12,7 @@ import { migration008LanguageLabV2 } from '@/db/migrations/008_language_lab_v2';
 import { migration009ProductivitySuite } from '@/db/migrations/009_productivity_suite';
 import { migration010FocusPro } from '@/db/migrations/010_focus_pro';
 import { migration011UserPagePrefs } from '@/db/migrations/011_user_page_prefs';
+import { migration012KanbanBoardColors } from '@/db/migrations/012_kanban_board_colors';
 
 export const MIGRATIONS: readonly Migration[] = [
   migration001Initial,
@@ -25,6 +26,7 @@ export const MIGRATIONS: readonly Migration[] = [
   migration009ProductivitySuite,
   migration010FocusPro,
   migration011UserPagePrefs,
+  migration012KanbanBoardColors,
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;

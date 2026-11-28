@@ -11,10 +11,11 @@ import {
   View,
 } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/app-icon';
 import type { NotePageRecord } from '@/features/notes/types';
-import { useThemeColors } from '@/theme/colors';
+import { useThemeColors, useViewport } from '@/theme/colors';
 
 type Props = {
   visible: boolean;
@@ -38,6 +39,8 @@ function QuickFindModalContent({
   onCreatePageWithTitle,
 }: Props) {
   const colors = useThemeColors();
+  const { isDesktop } = useViewport();
+  const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
 
@@ -105,12 +108,19 @@ function QuickFindModalContent({
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <View style={styles.root}>
+      <View
+        style={[
+          styles.root,
+          !isDesktop
+            ? { paddingTop: Math.max(insets.top + 10, 16), paddingHorizontal: 12 }
+            : null,
+        ]}>
         <Pressable style={styles.backdrop} onPress={onClose} />
         <Animated.View
           entering={FadeIn.duration(130)}
           style={[
             styles.dialog,
+            !isDesktop ? styles.dialogMobile : null,
             { backgroundColor: colors.surface, borderColor: colors.line },
           ]}>
           <View style={[styles.searchRow, { borderBottomColor: colors.line }]}>
@@ -124,13 +134,36 @@ function QuickFindModalContent({
               onKeyPress={handleKeyPress}
               onSubmitEditing={() => confirmSelection(clampedIndex)}
               autoFocus
+              returnKeyType="search"
               placeholder="Найти или создать страницу…"
               placeholderTextColor={colors.muted}
               style={[styles.searchInput, { color: colors.text }]}
             />
-            <View style={[styles.kbdPill, { backgroundColor: colors.surfaceSubtle }]}>
-              <Text style={[styles.kbdText, { color: colors.muted }]}>ESC</Text>
-            </View>
+            {query.length > 0 ? (
+              <Pressable
+                accessibilityLabel="Очистить поиск"
+                hitSlop={6}
+                onPress={() => {
+                  setQuery('');
+                  setSelectedIndex(0);
+                }}
+                style={[styles.clearPill, { backgroundColor: colors.surfaceSubtle }]}>
+                <AppIcon name="close" size={11} color={colors.muted} />
+              </Pressable>
+            ) : null}
+            {isDesktop ? (
+              <View style={[styles.kbdPill, { backgroundColor: colors.surfaceSubtle }]}>
+                <Text style={[styles.kbdText, { color: colors.muted }]}>ESC</Text>
+              </View>
+            ) : (
+              <Pressable
+                accessibilityLabel="Закрыть поиск"
+                hitSlop={6}
+                onPress={onClose}
+                style={styles.cancelBtn}>
+                <Text style={[styles.cancelText, { color: colors.text }]}>Отмена</Text>
+              </Pressable>
+            )}
           </View>
 
           <ScrollView style={styles.results} keyboardShouldPersistTaps="always">
@@ -190,11 +223,13 @@ function QuickFindModalContent({
             )}
           </ScrollView>
 
-          <View style={[styles.footer, { borderTopColor: colors.line }]}>
-            <Text style={[styles.footerHint, { color: colors.muted }]}>
-              ↑↓ навигация · Enter открыть · Esc закрыть
-            </Text>
-          </View>
+          {isDesktop ? (
+            <View style={[styles.footer, { borderTopColor: colors.line }]}>
+              <Text style={[styles.footerHint, { color: colors.muted }]}>
+                ↑↓ навигация · Enter открыть · Esc закрыть
+              </Text>
+            </View>
+          ) : null}
         </Animated.View>
       </View>
     </Modal>
@@ -220,6 +255,9 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
   },
+  dialogMobile: {
+    maxHeight: '80%',
+  },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -228,14 +266,27 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  searchIcon: {
-    fontSize: 18,
-  },
   searchInput: {
     flex: 1,
     fontSize: 15,
     paddingVertical: 2,
+    minWidth: 0,
     ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
+  },
+  clearPill: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelBtn: {
+    paddingLeft: 4,
+    paddingVertical: 2,
+  },
+  cancelText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
   kbdPill: {
     paddingHorizontal: 6,

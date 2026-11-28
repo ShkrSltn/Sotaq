@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/app-icon';
 import { RipplePressable } from '@/components/ripple-pressable';
+import { WorkspacePagesModal } from '@/components/workspace-pages-modal';
 import { useDatabaseState } from '@/db/provider';
 import { useAuth } from '@/features/auth/auth-context';
 import {
@@ -28,23 +29,28 @@ export function AppShell({ children }: { children: ReactNode }) {
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const { schemaVersion } = useDatabaseState();
-  const { status, user, canAccess, logout } = useAuth();
+  const { status, user, canAccess, orderedControllableKeys, logout } = useAuth();
   const [moreOpen, setMoreOpen] = useState(false);
+  const [pagesModalOpen, setPagesModalOpen] = useState(false);
 
   if (status !== 'authenticated' || !user) {
     return <View style={[styles.authContainer, { backgroundColor: colors.background }]}>{children}</View>;
   }
 
-  const activeFeatures = getActiveFeatures().filter((item) => canAccess(item.key));
+  const orderIndex = new Map<string, number>();
+  orderIndex.set('home', -1);
+  orderedControllableKeys.forEach((key, idx) => orderIndex.set(key, idx));
+  orderIndex.set('admin', 999);
+
+  const activeFeatures = getActiveFeatures()
+    .filter((item) => canAccess(item.key))
+    .sort((a, b) => (orderIndex.get(a.key) ?? 500) - (orderIndex.get(b.key) ?? 500));
   const plannedFeatures = getPlannedFeatures().filter((item) => canAccess(item.key));
   const currentFeature = findFeatureByPathname(pathname);
 
   const mobileBarCandidates = activeFeatures.filter((item) => item.showInMobileBar !== false);
-  const hasOverflow = mobileBarCandidates.length > MAX_MOBILE_BAR_ITEMS;
-  const visibleMobileTabs = hasOverflow
-    ? mobileBarCandidates.slice(0, MAX_MOBILE_BAR_ITEMS - 1)
-    : mobileBarCandidates;
-  const overflowTabs = hasOverflow ? mobileBarCandidates.slice(MAX_MOBILE_BAR_ITEMS - 1) : [];
+  const visibleMobileTabs = mobileBarCandidates.slice(0, MAX_MOBILE_BAR_ITEMS - 1);
+  const overflowTabs = mobileBarCandidates.slice(MAX_MOBILE_BAR_ITEMS - 1);
 
   function isActiveRoute(feature: FeatureDefinition): boolean {
     if (!feature.route || typeof feature.route !== 'string') {
@@ -86,7 +92,15 @@ export function AppShell({ children }: { children: ReactNode }) {
           </View>
 
           <ScrollView style={styles.sidebarScroll} contentContainerStyle={styles.sidebarContent}>
-            <Text style={[styles.sectionCaption, { color: colors.muted }]}>Разделы</Text>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={[styles.sectionCaption, { color: colors.muted }]}>Разделы</Text>
+              <RipplePressable
+                accessibilityLabel="Настроить страницы"
+                onPress={() => setPagesModalOpen(true)}
+                style={styles.customizePagesBtn}>
+                <AppIcon name="filter" size={12} color={colors.muted} />
+              </RipplePressable>
+            </View>
             {activeFeatures.map((feature) => {
               const active = isActiveRoute(feature);
               return (
@@ -136,7 +150,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             ) : null}
           </ScrollView>
 
-          <FocusSidebarWidget />
+          {canAccess('focus') ? <FocusSidebarWidget /> : null}
 
           <View style={[styles.sidebarFooter, { borderTopColor: colors.line }]}>
             <View style={styles.profileRow}>
@@ -171,6 +185,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <View style={styles.desktopMain}>{children}</View>
         <FocusAbandonGuardModal />
+        <WorkspacePagesModal visible={pagesModalOpen} onClose={() => setPagesModalOpen(false)} />
       </View>
     );
   }
@@ -199,7 +214,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </View>
 
         <View style={styles.mobileHeaderRight}>
-          <FocusMobileTrigger />
+          {canAccess('focus') ? <FocusMobileTrigger /> : null}
         </View>
       </View>
 
@@ -239,15 +254,13 @@ export function AppShell({ children }: { children: ReactNode }) {
           );
         })}
 
-        {hasOverflow ? (
-          <RipplePressable
-            accessibilityLabel="Ещё разделы"
-            onPress={() => setMoreOpen(true)}
-            style={styles.mobileTab}>
-            <AppIcon name="more" size="md" color={colors.muted} />
-            <Text style={[styles.mobileTabLabel, { color: colors.muted }]}>Ещё</Text>
-          </RipplePressable>
-        ) : null}
+        <RipplePressable
+          accessibilityLabel="Ещё разделы"
+          onPress={() => setMoreOpen(true)}
+          style={styles.mobileTab}>
+          <AppIcon name="more" size="md" color={colors.muted} />
+          <Text style={[styles.mobileTabLabel, { color: colors.muted }]}>Ещё</Text>
+        </RipplePressable>
       </View>
 
       <Modal
@@ -293,6 +306,20 @@ export function AppShell({ children }: { children: ReactNode }) {
               );
             })}
 
+            <RipplePressable
+              onPress={() => {
+                setMoreOpen(false);
+                setPagesModalOpen(true);
+              }}
+              style={StyleSheet.flatten([
+                styles.navItem,
+                styles.customizeMobileRow,
+                { backgroundColor: colors.surfaceSubtle },
+              ])}>
+              <AppIcon name="filter" size="sm" color={colors.text} />
+              <Text style={[styles.navLabel, { color: colors.text }]}>Настроить страницы</Text>
+            </RipplePressable>
+
             <View style={[styles.moreProfileBlock, { borderTopColor: colors.line }]}>
               <View style={styles.profileRow}>
                 <View style={styles.profileInfo}>
@@ -330,6 +357,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </Pressable>
       </Modal>
       <FocusAbandonGuardModal />
+      <WorkspacePagesModal visible={pagesModalOpen} onClose={() => setPagesModalOpen(false)} />
     </View>
   );
 }
@@ -367,6 +395,22 @@ const styles = StyleSheet.create({
   sidebarContent: {
     padding: 12,
     gap: 4,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingRight: 4,
+  },
+  customizePagesBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  customizeMobileRow: {
+    marginTop: 6,
   },
   sectionCaption: {
     fontSize: 11,

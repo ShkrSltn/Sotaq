@@ -10,6 +10,7 @@ import { migration006LanguageLab } from '@/db/migrations/006_language_lab';
 import { migration007NotesNotionV2 } from '@/db/migrations/007_notes_notion_v2';
 import { migration008LanguageLabV2 } from '@/db/migrations/008_language_lab_v2';
 import { migration009ProductivitySuite } from '@/db/migrations/009_productivity_suite';
+import { migration010FocusPro } from '@/db/migrations/010_focus_pro';
 
 export const MIGRATIONS: readonly Migration[] = [
   migration001Initial,
@@ -21,6 +22,7 @@ export const MIGRATIONS: readonly Migration[] = [
   migration007NotesNotionV2,
   migration008LanguageLabV2,
   migration009ProductivitySuite,
+  migration010FocusPro,
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;

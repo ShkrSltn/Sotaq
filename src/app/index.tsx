@@ -65,31 +65,35 @@ export default function HomeScreen() {
       ]}>
       <View style={styles.inner}>
         <View style={styles.hero}>
-          <Text style={[styles.title, { color: colors.text }]}>
+          <Text style={[isDesktop ? styles.title : styles.titleMobile, { color: colors.text }]}>
             {user ? `Привет, ${user.displayName}` : 'Sotaq'}
           </Text>
-          <Text style={[styles.subtitle, { color: colors.muted }]}>
-            Личное рабочее пространство
-          </Text>
-          <View style={styles.badgesRow}>
-            {user ? (
-              <View
-                style={[
-                  styles.roleBadge,
-                  { backgroundColor: colors.surface, borderColor: colors.line },
-                ]}>
-                <Text style={[styles.roleBadgeText, { color: colors.text }]}>
-                  {user.role === 'admin' ? 'Администратор' : 'Пользователь'}
-                </Text>
-              </View>
-            ) : null}
-            <View style={[styles.statusBadge, { backgroundColor: colors.successBg }]}>
-              <View style={[styles.statusDot, { backgroundColor: colors.success }]} />
-              <Text style={[styles.statusLabel, { color: colors.success }]}>
-                SQLite v{schemaVersion}
+          {isDesktop ? (
+            <>
+              <Text style={[styles.subtitle, { color: colors.muted }]}>
+                Личное рабочее пространство
               </Text>
-            </View>
-          </View>
+              <View style={styles.badgesRow}>
+                {user ? (
+                  <View
+                    style={[
+                      styles.roleBadge,
+                      { backgroundColor: colors.surface, borderColor: colors.line },
+                    ]}>
+                    <Text style={[styles.roleBadgeText, { color: colors.text }]}>
+                      {user.role === 'admin' ? 'Администратор' : 'Пользователь'}
+                    </Text>
+                  </View>
+                ) : null}
+                <View style={[styles.statusBadge, { backgroundColor: colors.successBg }]}>
+                  <View style={[styles.statusDot, { backgroundColor: colors.success }]} />
+                  <Text style={[styles.statusLabel, { color: colors.success }]}>
+                    SQLite v{schemaVersion}
+                  </Text>
+                </View>
+              </View>
+            </>
+          ) : null}
         </View>
 
         {/* Live Today Strip: Habits + Focus */}
@@ -192,10 +196,19 @@ export default function HomeScreen() {
               { backgroundColor: colors.surface, borderColor: colors.line },
             ]}>
             <View style={styles.todayCardHeader}>
-              <View style={styles.todayHeaderLeft}>
+              <RipplePressable
+                onPress={() => {
+                  if (canAccess('focus')) {
+                    router.navigate('/focus' as never);
+                  }
+                }}
+                style={styles.todayHeaderLeft}>
                 <AppIcon name="timer" size="sm" color={colors.muted} />
                 <Text style={[styles.todayCardTitle, { color: colors.text }]}>Фокус сегодня</Text>
-              </View>
+                {canAccess('focus') ? (
+                  <AppIcon name="chevronRight" size="xs" color={colors.muted} />
+                ) : null}
+              </RipplePressable>
               <RipplePressable
                 onPress={focus.toggle}
                 style={StyleSheet.flatten([
@@ -216,17 +229,46 @@ export default function HomeScreen() {
             <View style={styles.focusStatsRow}>
               <View style={[styles.focusStatBox, { backgroundColor: colors.surfaceSubtle }]}>
                 <Text style={[styles.focusStatNum, { color: colors.text }]}>
-                  {focus.stats.todayMinutes} мин
+                  {focus.stats.todayMinutes}/{focus.analytics.dailyGoalMinutes}м
                 </Text>
                 <Text style={[styles.focusStatLabel, { color: colors.muted }]}>
                   сегодня · {focus.stats.todaySessions} сес.
                 </Text>
+                <View style={[styles.focusGoalTrack, { backgroundColor: colors.line }]}>
+                  <View
+                    style={[
+                      styles.focusGoalFill,
+                      {
+                        width: `${focus.analytics.todayGoalProgress}%`,
+                        backgroundColor:
+                          focus.analytics.todayGoalProgress >= 100
+                            ? colors.success
+                            : colors.accent,
+                      },
+                    ]}
+                  />
+                </View>
               </View>
               <View style={[styles.focusStatBox, { backgroundColor: colors.surfaceSubtle }]}>
-                <Text style={[styles.focusStatNum, { color: colors.text }]}>
-                  {focus.stats.weekMinutes} мин
+                <Text
+                  style={[
+                    styles.focusStatNum,
+                    {
+                      color:
+                        focus.analytics.state === 'broken'
+                          ? colors.danger
+                          : focus.analytics.state === 'drifting'
+                            ? colors.warning
+                            : focus.analytics.state === 'flow'
+                              ? colors.success
+                              : colors.text,
+                    },
+                  ]}>
+                  {focus.analytics.stateMeta.emoji} {focus.analytics.disciplineScore}
                 </Text>
-                <Text style={[styles.focusStatLabel, { color: colors.muted }]}>за 7 дней</Text>
+                <Text style={[styles.focusStatLabel, { color: colors.muted }]} numberOfLines={1}>
+                  {focus.analytics.stateMeta.shortLabel} · 7д: {focus.stats.weekMinutes}м
+                </Text>
               </View>
             </View>
           </View>
@@ -245,7 +287,7 @@ export default function HomeScreen() {
               </Text>
             </View>
           ) : (
-            <View style={[styles.grid, isDesktop ? styles.gridDesktop : null]}>
+            <View style={[styles.grid, isDesktop ? styles.gridDesktop : styles.gridMobile]}>
               {modules.map((item) => (
                 <RipplePressable
                   key={item.key}
@@ -257,17 +299,23 @@ export default function HomeScreen() {
                   }}
                   style={StyleSheet.flatten([
                     styles.card,
-                    isDesktop ? styles.cardDesktop : null,
+                    isDesktop ? styles.cardDesktop : styles.cardMobile,
                     { backgroundColor: colors.surface, borderColor: colors.line },
                   ])}>
                   <View style={styles.cardHeader}>
                     <View style={[styles.badgeBox, { backgroundColor: colors.surfaceSubtle }]}>
-                      <AppIcon name={item.icon} size="lg" color={colors.text} />
+                      <AppIcon name={item.icon} size={isDesktop ? 'lg' : 'md'} color={colors.text} />
                     </View>
-                    <AppIcon name="arrowRight" size="sm" color={colors.muted} />
+                    <AppIcon name="arrowRight" size="xs" color={colors.muted} />
                   </View>
-                  <Text style={[styles.cardTitle, { color: colors.text }]}>{item.title}</Text>
-                  <Text style={[styles.cardDetail, { color: colors.muted }]}>
+                  <Text
+                    style={[isDesktop ? styles.cardTitle : styles.cardTitleMobile, { color: colors.text }]}
+                    numberOfLines={1}>
+                    {isDesktop ? item.title : item.shortTitle}
+                  </Text>
+                  <Text
+                    style={[styles.cardDetail, { color: colors.muted }]}
+                    numberOfLines={isDesktop ? 2 : 2}>
                     {item.description}
                   </Text>
                 </RipplePressable>
@@ -343,6 +391,11 @@ const styles = StyleSheet.create({
     fontSize: 30,
     fontWeight: '700',
     letterSpacing: -0.7,
+  },
+  titleMobile: {
+    fontSize: 22,
+    fontWeight: '700',
+    letterSpacing: -0.4,
   },
   subtitle: {
     fontSize: 14,
@@ -508,6 +561,16 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '500',
   },
+  focusGoalTrack: {
+    height: 4,
+    borderRadius: 2,
+    marginTop: 4,
+    overflow: 'hidden',
+  },
+  focusGoalFill: {
+    height: '100%',
+    borderRadius: 2,
+  },
   section: {
     gap: 12,
   },
@@ -529,6 +592,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
   },
+  gridMobile: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
   card: {
     borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
@@ -538,6 +606,16 @@ const styles = StyleSheet.create({
   cardDesktop: {
     width: '32%',
     minWidth: 240,
+  },
+  cardMobile: {
+    width: '48.2%',
+    padding: 13,
+    borderRadius: 14,
+    gap: 5,
+  },
+  cardTitleMobile: {
+    fontSize: 15,
+    fontWeight: '700',
   },
   plannedCard: {
     opacity: 0.72,

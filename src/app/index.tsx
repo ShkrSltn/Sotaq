@@ -1,23 +1,60 @@
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { AppIcon } from '@/components/app-icon';
 import { RipplePressable } from '@/components/ripple-pressable';
-import { useDatabaseState } from '@/db/provider';
+import { useDatabase, useDatabaseState } from '@/db/provider';
 import { useAuth } from '@/features/auth/auth-context';
+import { useFocus } from '@/features/focus/focus-context';
+import { formatClock } from '@/features/focus/types';
+import { listHabitsWithStats, toggleHabitLog } from '@/features/habits/habits-repository';
+import type { HabitWithStats } from '@/features/habits/types';
+import { toDateKey } from '@/features/kanban/types';
 import { getActiveFeatures, getPlannedFeatures } from '@/features/registry';
 import { useThemeColors, useViewport } from '@/theme/colors';
 
 export default function HomeScreen() {
+  const db = useDatabase();
   const colors = useThemeColors();
   const { isDesktop } = useViewport();
   const { schemaVersion } = useDatabaseState();
   const { user, canAccess } = useAuth();
+  const focus = useFocus();
+
+  const [habits, setHabits] = useState<HabitWithStats[]>([]);
+  const userId = user?.id ?? '';
+
+  const loadHabits = useCallback(async () => {
+    if (!userId || !canAccess('habits')) {
+      setHabits([]);
+      return;
+    }
+    const items = await listHabitsWithStats(db, userId);
+    setHabits(items);
+  }, [db, userId, canAccess]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadHabits();
+      focus.refreshStats();
+    }, [loadHabits, focus]),
+  );
+
+  async function handleToggleHabitToday(habitId: string) {
+    if (!userId) {
+      return;
+    }
+    await toggleHabitLog(db, userId, habitId, toDateKey(new Date()));
+    await loadHabits();
+  }
 
   const modules = getActiveFeatures().filter(
     (item) => item.key !== 'home' && canAccess(item.key),
   );
   const planned = getPlannedFeatures().filter((item) => canAccess(item.key));
+
+  const habitsDoneCount = habits.filter((h) => h.completedToday).length;
 
   return (
     <ScrollView
@@ -32,13 +69,17 @@ export default function HomeScreen() {
             {user ? `Привет, ${user.displayName}` : 'Sotaq'}
           </Text>
           <Text style={[styles.subtitle, { color: colors.muted }]}>
-            Личное рабочее пространство — модули подключаются поэтапно
+            Личное рабочее пространство
           </Text>
           <View style={styles.badgesRow}>
             {user ? (
-              <View style={[styles.roleBadge, { backgroundColor: colors.surface, borderColor: colors.line }]}>
+              <View
+                style={[
+                  styles.roleBadge,
+                  { backgroundColor: colors.surface, borderColor: colors.line },
+                ]}>
                 <Text style={[styles.roleBadgeText, { color: colors.text }]}>
-                  {user.role === 'admin' ? 'Роль: Администратор' : 'Роль: Пользователь'}
+                  {user.role === 'admin' ? 'Администратор' : 'Пользователь'}
                 </Text>
               </View>
             ) : null}
@@ -51,8 +92,148 @@ export default function HomeScreen() {
           </View>
         </View>
 
+        {/* Live Today Strip: Habits + Focus */}
+        <View style={[styles.todayGrid, isDesktop ? styles.todayGridDesktop : null]}>
+          {canAccess('habits') ? (
+            <View
+              style={[
+                styles.todayCard,
+                isDesktop ? styles.todayCardHabits : null,
+                { backgroundColor: colors.surface, borderColor: colors.line },
+              ]}>
+              <View style={styles.todayCardHeader}>
+                <View style={styles.todayHeaderLeft}>
+                  <AppIcon name="flame" size="sm" color={colors.warning} />
+                  <Text style={[styles.todayCardTitle, { color: colors.text }]}>
+                    Привычки на сегодня
+                  </Text>
+                  {habits.length > 0 ? (
+                    <Text style={[styles.todayCounter, { color: colors.muted }]}>
+                      {habitsDoneCount}/{habits.length}
+                    </Text>
+                  ) : null}
+                </View>
+
+                <RipplePressable
+                  onPress={() => router.navigate('/habits' as never)}
+                  style={styles.openLinkBtn}>
+                  <Text style={[styles.openLinkText, { color: colors.muted }]}>Все</Text>
+                  <AppIcon name="arrowRight" size="xs" color={colors.muted} />
+                </RipplePressable>
+              </View>
+
+              {habits.length === 0 ? (
+                <RipplePressable
+                  onPress={() => router.navigate('/habits' as never)}
+                  style={StyleSheet.flatten([
+                    styles.emptyTodayHint,
+                    { backgroundColor: colors.surfaceSubtle },
+                  ])}>
+                  <AppIcon name="plus" size="xs" color={colors.muted} />
+                  <Text style={[styles.emptyTodayText, { color: colors.muted }]}>
+                    Добавить привычки для ежедневного трекинга
+                  </Text>
+                </RipplePressable>
+              ) : (
+                <View style={styles.habitsChips}>
+                  {habits.map((habit) => (
+                    <RipplePressable
+                      key={habit.id}
+                      onPress={() => handleToggleHabitToday(habit.id)}
+                      style={StyleSheet.flatten([
+                        styles.habitPill,
+                        {
+                          backgroundColor: habit.completedToday
+                            ? `${habit.color}22`
+                            : colors.surfaceSubtle,
+                          borderColor: habit.completedToday ? habit.color : colors.line,
+                        },
+                      ])}>
+                      <View
+                        style={[
+                          styles.habitPillCheck,
+                          {
+                            backgroundColor: habit.completedToday ? habit.color : 'transparent',
+                            borderColor: habit.completedToday ? habit.color : colors.muted,
+                          },
+                        ]}>
+                        {habit.completedToday ? (
+                          <AppIcon name="check" size={10} color="#FFFFFF" strokeWidth={2.6} />
+                        ) : null}
+                      </View>
+                      <Text
+                        style={[
+                          styles.habitPillTitle,
+                          {
+                            color: colors.text,
+                            textDecorationLine: habit.completedToday ? 'line-through' : 'none',
+                            opacity: habit.completedToday ? 0.72 : 1,
+                          },
+                        ]}
+                        numberOfLines={1}>
+                        {habit.title}
+                      </Text>
+                      {habit.currentStreak > 0 ? (
+                        <Text style={[styles.habitPillStreak, { color: colors.warning }]}>
+                          🔥 {habit.currentStreak}
+                        </Text>
+                      ) : null}
+                    </RipplePressable>
+                  ))}
+                </View>
+              )}
+            </View>
+          ) : null}
+
+          <View
+            style={[
+              styles.todayCard,
+              isDesktop ? styles.todayCardFocus : null,
+              { backgroundColor: colors.surface, borderColor: colors.line },
+            ]}>
+            <View style={styles.todayCardHeader}>
+              <View style={styles.todayHeaderLeft}>
+                <AppIcon name="timer" size="sm" color={colors.muted} />
+                <Text style={[styles.todayCardTitle, { color: colors.text }]}>Фокус сегодня</Text>
+              </View>
+              <RipplePressable
+                onPress={focus.toggle}
+                style={StyleSheet.flatten([
+                  styles.focusQuickPlay,
+                  { backgroundColor: colors.accent },
+                ])}>
+                <AppIcon
+                  name={focus.isRunning ? 'pause' : 'play'}
+                  size={11}
+                  color={colors.accentText}
+                />
+                <Text style={[styles.focusQuickPlayText, { color: colors.accentText }]}>
+                  {formatClock(focus.secondsLeft)}
+                </Text>
+              </RipplePressable>
+            </View>
+
+            <View style={styles.focusStatsRow}>
+              <View style={[styles.focusStatBox, { backgroundColor: colors.surfaceSubtle }]}>
+                <Text style={[styles.focusStatNum, { color: colors.text }]}>
+                  {focus.stats.todayMinutes} мин
+                </Text>
+                <Text style={[styles.focusStatLabel, { color: colors.muted }]}>
+                  сегодня · {focus.stats.todaySessions} сес.
+                </Text>
+              </View>
+              <View style={[styles.focusStatBox, { backgroundColor: colors.surfaceSubtle }]}>
+                <Text style={[styles.focusStatNum, { color: colors.text }]}>
+                  {focus.stats.weekMinutes} мин
+                </Text>
+                <Text style={[styles.focusStatLabel, { color: colors.muted }]}>за 7 дней</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.muted }]}>Доступные модули</Text>
+          <Text style={[styles.sectionTitle, { color: colors.muted }]}>Разделы</Text>
           {modules.length === 0 ? (
             <View
               style={[
@@ -148,24 +329,24 @@ const styles = StyleSheet.create({
   },
   containerDesktop: {
     paddingHorizontal: 32,
-    paddingVertical: 32,
+    paddingVertical: 28,
   },
   inner: {
     width: '100%',
-    maxWidth: 920,
-    gap: 28,
+    maxWidth: 940,
+    gap: 24,
   },
   hero: {
-    gap: 8,
+    gap: 6,
   },
   title: {
-    fontSize: 32,
+    fontSize: 30,
     fontWeight: '700',
-    letterSpacing: -0.8,
+    letterSpacing: -0.7,
   },
   subtitle: {
-    fontSize: 15,
-    lineHeight: 22,
+    fontSize: 14,
+    lineHeight: 20,
   },
   badgesRow: {
     flexDirection: 'row',
@@ -202,6 +383,131 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
+  todayGrid: {
+    gap: 12,
+  },
+  todayGridDesktop: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+  },
+  todayCard: {
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 15,
+    gap: 12,
+  },
+  todayCardHabits: {
+    flex: 1.5,
+  },
+  todayCardFocus: {
+    flex: 1,
+  },
+  todayCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  todayHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  todayCardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  todayCounter: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  openLinkBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  openLinkText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  emptyTodayHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 11,
+    borderRadius: 10,
+  },
+  emptyTodayText: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  habitsChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  habitPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    maxWidth: '100%',
+  },
+  habitPillCheck: {
+    width: 16,
+    height: 16,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  habitPillTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    flexShrink: 1,
+  },
+  habitPillStreak: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  focusQuickPlay: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  focusQuickPlayText: {
+    fontSize: 12,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  focusStatsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  focusStatBox: {
+    flex: 1,
+    borderRadius: 11,
+    padding: 11,
+    gap: 2,
+  },
+  focusStatNum: {
+    fontSize: 18,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  focusStatLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+  },
   section: {
     gap: 12,
   },
@@ -230,8 +536,8 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   cardDesktop: {
-    width: '48.5%',
-    minWidth: 260,
+    width: '32%',
+    minWidth: 240,
   },
   plannedCard: {
     opacity: 0.72,
@@ -248,12 +554,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  badgeGlyph: {
-    fontSize: 17,
-  },
-  cardArrow: {
-    fontSize: 16,
   },
   stageTag: {
     paddingHorizontal: 8,

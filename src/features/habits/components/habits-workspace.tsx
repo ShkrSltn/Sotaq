@@ -982,80 +982,154 @@ export function HabitsWorkspace() {
                 paddingBottom: isDesktop ? 4 : Math.max(insets.bottom, 14),
               },
             ]}>
-            <View style={[styles.dayModalHeader, { borderBottomColor: colors.line }]}>
-              <Text style={[styles.dayModalTitle, { color: colors.text }]}>
-                {dayModalDateKey ? formatDateKeyRu(dayModalDateKey) : ''}
-              </Text>
+            {(() => {
+              const doneForDay = dayModalDateKey
+                ? habits.filter((h) => h.completedDates.has(dayModalDateKey)).length
+                : 0;
+              const remainingForDay = Math.max(0, habits.length - doneForDay);
+              const allMarked = habits.length > 0 && remainingForDay === 0;
 
-              <View style={styles.dayModalHeaderRight}>
-                {dayModalDateKey && habits.length > 1 ? (
-                  <RipplePressable
-                    onPress={() => {
-                      const allMarked = habits.every((h) =>
-                        h.completedDates.has(dayModalDateKey),
-                      );
-                      handleSetAllForDay(dayModalDateKey, !allMarked);
-                    }}
-                    style={StyleSheet.flatten([
-                      styles.dayMarkAllBtn,
-                      { backgroundColor: colors.surfaceSubtle },
-                    ])}>
-                    <Text style={[styles.dayMarkAllText, { color: colors.text }]}>
-                      {habits.every((h) => h.completedDates.has(dayModalDateKey))
-                        ? 'Снять все'
-                        : 'Отметить все'}
-                    </Text>
-                  </RipplePressable>
-                ) : null}
+              return (
+                <>
+                  <View style={[styles.dayModalHeader, { borderBottomColor: colors.line }]}>
+                    <View style={styles.dayModalTitleWrap}>
+                      <Text style={[styles.dayModalTitle, { color: colors.text }]}>
+                        {dayModalDateKey ? formatDateKeyRu(dayModalDateKey) : ''}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.dayModalSubtitle,
+                          { color: allMarked ? colors.success : colors.muted },
+                        ]}>
+                        {allMarked
+                          ? `Все ${habits.length} выполнены ✓`
+                          : `Выполнено ${doneForDay} из ${habits.length}`}
+                      </Text>
+                    </View>
 
-                <RipplePressable
-                  onPress={() => setDayModalDateKey(null)}
-                  style={StyleSheet.flatten([
-                    styles.dayModalClose,
-                    { backgroundColor: colors.surfaceSubtle },
-                  ])}>
-                  <AppIcon name="close" size="xs" color={colors.muted} />
-                </RipplePressable>
-              </View>
-            </View>
+                    <RipplePressable
+                      accessibilityLabel="Закрыть"
+                      onPress={() => setDayModalDateKey(null)}
+                      style={StyleSheet.flatten([
+                        styles.dayModalClose,
+                        { backgroundColor: colors.surfaceSubtle },
+                      ])}>
+                      <AppIcon name="close" size="xs" color={colors.muted} />
+                    </RipplePressable>
+                  </View>
 
-            <View style={styles.dayModalList}>
-              {dayModalDateKey
-                ? habits.map((habit) => {
-                    const done = habit.completedDates.has(dayModalDateKey);
-                    return (
+                  <View style={styles.dayModalList}>
+                    {dayModalDateKey
+                      ? habits.map((habit) => {
+                          const done = habit.completedDates.has(dayModalDateKey);
+                          return (
+                            <RipplePressable
+                              key={habit.id}
+                              onPress={() => handleToggleCell(habit.id, dayModalDateKey)}
+                              style={StyleSheet.flatten([
+                                styles.dayModalRow,
+                                done
+                                  ? {
+                                      backgroundColor: `${habit.color}1F`,
+                                      borderColor: `${habit.color}66`,
+                                    }
+                                  : {
+                                      backgroundColor: colors.surfaceSubtle,
+                                      borderColor: 'transparent',
+                                    },
+                              ])}>
+                              <View
+                                style={[
+                                  styles.dayModalCheck,
+                                  {
+                                    backgroundColor: done ? habit.color : 'transparent',
+                                    borderColor: done ? habit.color : colors.muted,
+                                  },
+                                ]}>
+                                {done ? (
+                                  <AppIcon
+                                    name="check"
+                                    size={11}
+                                    color="#FFFFFF"
+                                    strokeWidth={2.6}
+                                  />
+                                ) : null}
+                              </View>
+                              <View style={styles.dayModalRowBody}>
+                                <Text
+                                  style={[styles.dayModalRowTitle, { color: colors.text }]}
+                                  numberOfLines={1}>
+                                  {habit.title}
+                                </Text>
+                              </View>
+                              <View
+                                style={[
+                                  styles.dayModalStatusPill,
+                                  done
+                                    ? { backgroundColor: `${habit.color}2A` }
+                                    : { backgroundColor: colors.surface },
+                                ]}>
+                                <Text
+                                  style={[
+                                    styles.dayModalStatusText,
+                                    { color: done ? habit.color : colors.muted },
+                                  ]}>
+                                  {done ? 'Готово' : '+ Добавить'}
+                                </Text>
+                              </View>
+                            </RipplePressable>
+                          );
+                        })
+                      : null}
+                  </View>
+
+                  {dayModalDateKey && habits.length > 1 ? (
+                    <View style={[styles.dayModalFooter, { borderTopColor: colors.line }]}>
                       <RipplePressable
-                        key={habit.id}
-                        onPress={() => handleToggleCell(habit.id, dayModalDateKey)}
+                        onPress={() => handleSetAllForDay(dayModalDateKey, !allMarked)}
                         style={StyleSheet.flatten([
-                          styles.dayModalRow,
-                          { backgroundColor: colors.surfaceSubtle },
+                          styles.dayModalBulkBtn,
+                          allMarked
+                            ? {
+                                backgroundColor: colors.surfaceSubtle,
+                                borderColor: colors.line,
+                              }
+                            : {
+                                backgroundColor: colors.accent,
+                                borderColor: colors.accent,
+                              },
                         ])}>
-                        <View
-                          style={[
-                            styles.dayModalCheck,
-                            {
-                              backgroundColor: done ? habit.color : 'transparent',
-                              borderColor: done ? habit.color : colors.muted,
-                            },
-                          ]}>
-                          {done ? (
-                            <AppIcon name="check" size={11} color="#FFFFFF" strokeWidth={2.6} />
-                          ) : null}
-                        </View>
+                        <AppIcon
+                          name={allMarked ? 'close' : 'check'}
+                          size="xs"
+                          color={allMarked ? colors.text : colors.accentText}
+                        />
                         <Text
                           style={[
-                            styles.dayModalRowTitle,
-                            { color: colors.text, opacity: done ? 0.72 : 1 },
-                          ]}
-                          numberOfLines={1}>
-                          {habit.title}
+                            styles.dayModalBulkText,
+                            { color: allMarked ? colors.text : colors.accentText },
+                          ]}>
+                          {allMarked
+                            ? `Снять все (${habits.length})`
+                            : `Отметить все (+${remainingForDay})`}
                         </Text>
                       </RipplePressable>
-                    );
-                  })
-                : null}
-            </View>
+
+                      <RipplePressable
+                        onPress={() => setDayModalDateKey(null)}
+                        style={StyleSheet.flatten([
+                          styles.dayModalDoneBtn,
+                          { backgroundColor: colors.surfaceSubtle },
+                        ])}>
+                        <Text style={[styles.dayModalDoneText, { color: colors.text }]}>
+                          Готово
+                        </Text>
+                      </RipplePressable>
+                    </View>
+                  ) : null}
+                </>
+              );
+            })()}
           </Animated.View>
         </View>
       </Modal>
@@ -1488,25 +1562,17 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     gap: 8,
   },
-  dayModalHeaderRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  dayMarkAllBtn: {
-    paddingHorizontal: 10,
-    height: 28,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dayMarkAllText: {
-    fontSize: 12,
-    fontWeight: '600',
+  dayModalTitleWrap: {
+    flex: 1,
+    gap: 2,
   },
   dayModalTitle: {
     fontSize: 15,
     fontWeight: '700',
+  },
+  dayModalSubtitle: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   dayModalClose: {
     width: 28,
@@ -1517,15 +1583,20 @@ const styles = StyleSheet.create({
   },
   dayModalList: {
     padding: 12,
-    gap: 6,
+    gap: 8,
   },
   dayModalRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingVertical: 11,
+    borderRadius: 11,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  dayModalRowBody: {
+    flex: 1,
+    minWidth: 0,
   },
   dayModalCheck: {
     width: 20,
@@ -1536,8 +1607,50 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dayModalRowTitle: {
-    flex: 1,
     fontSize: 14,
+    fontWeight: '600',
+  },
+  dayModalStatusPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 7,
+  },
+  dayModalStatusText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  dayModalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  dayModalBulkBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    height: 38,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  dayModalBulkText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  dayModalDoneBtn: {
+    height: 38,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayModalDoneText: {
+    fontSize: 13,
     fontWeight: '600',
   },
 });

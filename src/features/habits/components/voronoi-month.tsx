@@ -69,45 +69,50 @@ export const VoronoiMonth = memo(function VoronoiMonth({
 
   // Precompute day states for fast render + streak chain lines
   const dayStates = useMemo(() => {
-    const createdKey = selectedHabit ? selectedHabit.createdAt.slice(0, 10) : null;
     let activeCount = 0;
 
     const map = cells.map((cell) => {
       const key = `${monthPrefix}${pad2(cell.day)}`;
       const isToday = key === todayKey;
       const isFuture = key > todayKey;
-      const isBeforeCreated =
-        createdKey !== null && key < createdKey && !selectedHabit?.completedDates.has(key);
 
       let doneCount = 0;
-      let totalCount = selectedHabit ? 1 : totalHabits;
+      const totalCount = selectedHabit ? 1 : totalHabits;
       let fill: string = colors.surfaceSubtle;
       let fillOpacity = 1;
       let isMarked = false;
+      const completedColors: string[] = [];
 
       if (selectedHabit) {
         if (selectedHabit.completedDates.has(key)) {
           doneCount = 1;
           isMarked = true;
           fill = selectedHabit.color;
+          completedColors.push(selectedHabit.color);
         }
       } else if (totalHabits > 0) {
         for (let i = 0; i < totalHabits; i += 1) {
           if (habits[i].completedDates.has(key)) {
             doneCount += 1;
+            completedColors.push(habits[i].color);
           }
         }
         if (doneCount > 0) {
           isMarked = true;
           const ratio = doneCount / totalHabits;
-          fill = singleFallbackColor;
-          fillOpacity = ratio >= 1 ? 1 : ratio >= 0.66 ? 0.76 : ratio >= 0.34 ? 0.52 : 0.34;
+          if (doneCount === 1) {
+            fill = completedColors[0];
+            fillOpacity = totalHabits === 1 ? 1 : 0.72;
+          } else {
+            fill = singleFallbackColor;
+            fillOpacity = ratio >= 1 ? 1 : ratio >= 0.66 ? 0.84 : 0.68;
+          }
         }
       }
 
       if (isMarked) {
         activeCount += 1;
-      } else if (isFuture || isBeforeCreated) {
+      } else if (isFuture) {
         fillOpacity = 0.38;
       }
 
@@ -119,6 +124,7 @@ export const VoronoiMonth = memo(function VoronoiMonth({
         isMarked,
         doneCount,
         totalCount,
+        completedColors,
         fill,
         fillOpacity,
       };
@@ -326,29 +332,47 @@ export const VoronoiMonth = memo(function VoronoiMonth({
             />
           ) : null}
 
-          {/* Layer 4: Centered Seed Dots & Crisp Day Numbers */}
+          {/* Layer 4: Centered Seed Dots (multi-habit color dots in 'All' mode) & Crisp Day Numbers */}
           {dayStates.items.map((item) => {
             const dotFill = item.isMarked ? '#FFFFFF' : colors.muted;
             const textColor = item.isMarked ? '#FFFFFF' : item.isToday ? colors.text : colors.muted;
             const cx = item.cell.center.x;
             const cy = item.cell.center.y;
+            const showMultiDots = !selectedHabit && item.completedColors.length > 1;
+            const visibleDots = showMultiDots ? item.completedColors.slice(0, 4) : [];
+            const dotSpacing = zoomMode || large ? 2.6 : 2.3;
+            const dotsStartX = cx - ((visibleDots.length - 1) * dotSpacing) / 2;
 
             return (
               <G key={`lbl-${item.cell.day}`}>
-                <Circle
-                  cx={cx}
-                  cy={cy - 2.4}
-                  r={item.isToday ? 1.25 : 0.95}
-                  fill={item.isToday && !item.isMarked ? barColor : dotFill}
-                  fillOpacity={item.isMarked ? 0.95 : item.isFuture ? 0.25 : 0.6}
-                />
+                {showMultiDots ? (
+                  visibleDots.map((dotColor, dotIdx) => (
+                    <Circle
+                      key={`d-${dotIdx}`}
+                      cx={dotsStartX + dotIdx * dotSpacing}
+                      cy={cy - 2.6}
+                      r={zoomMode || large ? 1.0 : 0.9}
+                      fill={dotColor}
+                      stroke="#FFFFFF"
+                      strokeWidth={0.45}
+                    />
+                  ))
+                ) : (
+                  <Circle
+                    cx={cx}
+                    cy={cy - 2.4}
+                    r={item.isToday ? 1.25 : 0.95}
+                    fill={item.isToday && !item.isMarked ? barColor : dotFill}
+                    fillOpacity={item.isMarked ? 0.95 : item.isFuture ? 0.25 : 0.6}
+                  />
+                )}
                 <SvgText
                   x={cx}
                   y={cy + 3.1}
                   fontSize={zoomMode || large ? 4.3 : 5.0}
                   fontWeight={item.isToday || item.isMarked ? '700' : '500'}
                   fill={textColor}
-                  fillOpacity={item.isMarked ? 0.96 : item.isFuture ? 0.32 : 0.8}
+                  fillOpacity={item.isMarked ? 0.98 : item.isFuture ? 0.32 : 0.8}
                   textAnchor="middle">
                   {item.cell.day}
                 </SvgText>

@@ -14,6 +14,7 @@ import {
 import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AppIcon } from '@/components/app-icon';
 import { RipplePressable } from '@/components/ripple-pressable';
 import {
   CONTROLLABLE_FEATURE_KEYS,
@@ -378,9 +379,14 @@ function UserEditorModalContent(props: UserEditorModalProps) {
                             { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
                           ]}>
                           <View style={styles.overrideInfo}>
-                            <Text style={[styles.overrideTitle, { color: colors.text }]}>
-                              {feature?.badge} {feature?.title ?? key}
-                            </Text>
+                            <View style={styles.overrideTitleRow}>
+                              {feature ? (
+                                <AppIcon name={feature.icon} size="xs" color={colors.text} />
+                              ) : null}
+                              <Text style={[styles.overrideTitle, { color: colors.text }]}>
+                                {feature?.title ?? key}
+                              </Text>
+                            </View>
                             {feature?.stageLabel ? (
                               <Text style={[styles.overrideStage, { color: colors.muted }]}>
                                 {feature.stageLabel}
@@ -612,6 +618,11 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     gap: 2,
+  },
+  overrideTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   overrideTitle: {
     fontSize: 13,

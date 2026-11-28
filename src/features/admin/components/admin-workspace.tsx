@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 
+import { AppIcon } from '@/components/app-icon';
 import { RipplePressable } from '@/components/ripple-pressable';
 import { useDatabase } from '@/db/provider';
 import { UserEditorModal } from '@/features/admin/components/user-editor-modal';
@@ -363,8 +364,11 @@ export function AdminWorkspace() {
                     ]}>
                     <View style={styles.matrixFeatureInfo}>
                       <View style={styles.matrixFeatureTitleRow}>
+                        {feature ? (
+                          <AppIcon name={feature.icon} size="sm" color={colors.text} />
+                        ) : null}
                         <Text style={[styles.matrixFeatureTitle, { color: colors.text }]}>
-                          {feature?.badge} {feature?.title ?? key}
+                          {feature?.title ?? key}
                         </Text>
                         {feature?.stageLabel ? (
                           <View style={[styles.miniPill, { backgroundColor: colors.surfaceSubtle }]}>
@@ -401,8 +405,9 @@ export function AdminWorkspace() {
               })}
 
               <View style={[styles.matrixNote, { backgroundColor: colors.surfaceSubtle }]}>
+                <AppIcon name="admin" size="xs" color={colors.muted} />
                 <Text style={[styles.matrixNoteText, { color: colors.muted }]}>
-                  ⚙ Админ-панель всегда доступна только роли Admin и не может быть открыта роли User.
+                  Админ-панель всегда доступна только роли Admin и не может быть открыта роли User.
                 </Text>
               </View>
             </View>
@@ -662,10 +667,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   matrixNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     paddingHorizontal: 16,
     paddingVertical: 11,
   },
   matrixNoteText: {
+    flex: 1,
     fontSize: 12,
     lineHeight: 17,
   },

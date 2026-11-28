@@ -6,8 +6,10 @@ import {
   CONTROLLABLE_FEATURE_KEYS,
   type ControllableFeatureKey,
   type FeatureAccessMap,
+  type ModuleDataCounts,
   type RoleFeatureMatrix,
   type UserFeatureOverridesMap,
+  type UserPagePrefsMap,
   type UserRecord,
   type UserRole,
 } from '@/features/auth/types';
@@ -511,6 +513,121 @@ export async function deleteUserByAdmin(
     await db.runAsync('DELETE FROM habits WHERE user_id = ?;', targetUserId);
     await db.runAsync('DELETE FROM focus_sessions WHERE user_id = ?;', targetUserId);
     await db.runAsync('DELETE FROM focus_settings WHERE user_id = ?;', targetUserId);
+    await db.runAsync('DELETE FROM user_page_prefs WHERE user_id = ?;', targetUserId);
     await db.runAsync('DELETE FROM users WHERE id = ?;', targetUserId);
   });
+}
+
+export function buildDefaultUserPagePrefs(): UserPagePrefsMap {
+  const map = {} as UserPagePrefsMap;
+  CONTROLLABLE_FEATURE_KEYS.forEach((key, index) => {
+    map[key] = { enabled: true, position: index };
+  });
+  return map;
+}
+
+export async function getUserPagePrefs(
+  db: SQLiteDatabase,
+  userId: string,
+): Promise<UserPagePrefsMap> {
+  const prefs = buildDefaultUserPagePrefs();
+  const rows = await db.getAllAsync<{
+    feature_key: string;
+    enabled: number;
+    position: number;
+  }>('SELECT feature_key, enabled, position FROM user_page_prefs WHERE user_id = ?;', userId);
+
+  for (const row of rows) {
+    const key = row.feature_key as ControllableFeatureKey;
+    if (CONTROLLABLE_FEATURE_KEYS.includes(key)) {
+      prefs[key] = {
+        enabled: row.enabled === 1,
+        position: row.position,
+      };
+    }
+  }
+  return prefs;
+}
+
+export async function saveUserPagePrefs(
+  db: SQLiteDatabase,
+  userId: string,
+  prefs: UserPagePrefsMap,
+): Promise<void> {
+  const now = nowIso();
+  await db.withTransactionAsync(async () => {
+    for (const key of CONTROLLABLE_FEATURE_KEYS) {
+      const entry = prefs[key];
+      await db.runAsync(
+        `INSERT INTO user_page_prefs (user_id, feature_key, enabled, position, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, feature_key) DO UPDATE SET
+           enabled = excluded.enabled,
+           position = excluded.position,
+           updated_at = excluded.updated_at;`,
+        userId,
+        key,
+        entry.enabled ? 1 : 0,
+        entry.position,
+        now,
+      );
+    }
+  });
+}
+
+export async function resetUserPagePrefs(db: SQLiteDatabase, userId: string): Promise<void> {
+  await db.runAsync('DELETE FROM user_page_prefs WHERE user_id = ?;', userId);
+}
+
+export async function getModuleDataCounts(
+  db: SQLiteDatabase,
+  userId: string,
+): Promise<ModuleDataCounts> {
+  const [todosRow, cardsRow, calendarRow, habitsRow, focusRow, notesRow, wordsRow] =
+    await Promise.all([
+      db.getFirstAsync<{ cnt: number }>(
+        'SELECT COUNT(*) AS cnt FROM todos WHERE user_id = ? AND is_done = 0;',
+        userId,
+      ),
+      db.getFirstAsync<{ cnt: number }>(
+        `SELECT COUNT(*) AS cnt
+         FROM kanban_cards c
+         INNER JOIN kanban_boards b ON b.id = c.board_id
+         WHERE b.user_id = ?;`,
+        userId,
+      ),
+      db.getFirstAsync<{ cnt: number }>(
+        'SELECT COUNT(*) AS cnt FROM todos WHERE user_id = ? AND due_date IS NOT NULL AND is_done = 0;',
+        userId,
+      ),
+      db.getFirstAsync<{ cnt: number }>(
+        'SELECT COUNT(*) AS cnt FROM habits WHERE user_id = ? AND archived = 0;',
+        userId,
+      ),
+      db.getFirstAsync<{ cnt: number }>(
+        `SELECT COUNT(*) AS cnt FROM focus_sessions WHERE user_id = ? AND mode = 'focus' AND completed = 1;`,
+        userId,
+      ),
+      db.getFirstAsync<{ cnt: number }>(
+        'SELECT COUNT(*) AS cnt FROM note_pages WHERE user_id = ?;',
+        userId,
+      ),
+      db.getFirstAsync<{ cnt: number }>(
+        `SELECT COUNT(*) AS cnt
+         FROM vocab_words w
+         INNER JOIN languages l ON l.id = w.language_id
+         WHERE l.user_id = ?;`,
+        userId,
+      ),
+    ]);
+
+  return {
+    calendar: { count: calendarRow?.cnt ?? 0, label: 'с дедлайном' },
+    todos: { count: todosRow?.cnt ?? 0, label: 'активных' },
+    kanban: { count: cardsRow?.cnt ?? 0, label: 'карточек' },
+    habits: { count: habitsRow?.cnt ?? 0, label: 'привычек' },
+    focus: { count: focusRow?.cnt ?? 0, label: 'сессий' },
+    notes: { count: notesRow?.cnt ?? 0, label: 'страниц' },
+    language: { count: wordsRow?.cnt ?? 0, label: 'слов' },
+  };
 }

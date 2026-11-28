@@ -31,3 +31,12 @@ export type RoleFeatureMatrix = Record<UserRole, Record<ControllableFeatureKey, 
 export type UserFeatureOverrideState = 'inherit' | 'allow' | 'deny';
 
 export type UserFeatureOverridesMap = Partial<Record<ControllableFeatureKey, boolean>>;
+
+export type UserPagePref = {
+  enabled: boolean;
+  position: number;
+};
+
+export type UserPagePrefsMap = Record<ControllableFeatureKey, UserPagePref>;
+
+export type ModuleDataCounts = Record<ControllableFeatureKey, { count: number; label: string }>;

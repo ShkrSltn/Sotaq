@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -16,12 +16,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/app-icon';
 import { RipplePressable } from '@/components/ripple-pressable';
+import { WebDragBox, type WebDomDragEvent } from '@/components/web-drag-box';
 import {
   VOCAB_STATUS_META,
+  VOCAB_STATUS_ORDER,
   type VocabStatus,
   type VocabWordRecord,
 } from '@/features/language/types';
 import { useThemeColors, useViewport } from '@/theme/colors';
+
+const EXAMPLE_DRAG_MIME = 'application/x-sotaq-vocab-example';
+const DROP_BLUE = '#3B82F6';
 
 type Props = {
   word: VocabWordRecord | null;
@@ -41,10 +46,9 @@ type Props = {
   onDelete: (wordId: string) => Promise<void>;
   onGenerateExamples: (word: VocabWordRecord) => Promise<void>;
   onAddManualExample: (wordId: string, sentence: string, translation: string) => Promise<void>;
+  onReorderExamples: (wordId: string, orderedExampleIds: string[]) => Promise<void>;
   onDeleteExample: (exampleId: string) => Promise<void>;
 };
-
-const STATUS_LIST: readonly VocabStatus[] = ['new', 'learning', 'known'];
 
 export function WordDetailModal(props: Props) {
   if (!props.word) {
@@ -61,6 +65,7 @@ function WordDetailModalContent({
   onDelete,
   onGenerateExamples,
   onAddManualExample,
+  onReorderExamples,
   onDeleteExample,
 }: Omit<Props, 'word'> & { word: VocabWordRecord }) {
   const colors = useThemeColors();
@@ -78,31 +83,65 @@ function WordDetailModalContent({
   const [exampleTranslation, setExampleTranslation] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  async function savePatch(
-    override?: Partial<{
-      term: string;
-      reading: string;
-      partOfSpeech: string;
-      translation: string;
-      explanation: string;
-      status: VocabStatus;
-    }>,
-  ) {
-    const cleanTerm = (override?.term ?? term).trim() || word.term;
-    await onSave(word.id, {
-      term: cleanTerm,
-      reading: override?.reading ?? reading,
-      partOfSpeech: override?.partOfSpeech ?? partOfSpeech,
-      translation: override?.translation ?? translation,
-      explanation: override?.explanation ?? explanation,
-      status: override?.status ?? status,
-    });
-  }
+  const [draggingExampleId, setDraggingExampleId] = useState<string | null>(null);
+  const [exampleDropTarget, setExampleDropTarget] = useState<{
+    id: string;
+    position: 'before' | 'after';
+  } | null>(null);
 
-  async function persistAndClose() {
-    await savePatch();
+  const savePatchIfDirty = useCallback(
+    async (
+      override?: Partial<{
+        term: string;
+        reading: string;
+        partOfSpeech: string;
+        translation: string;
+        explanation: string;
+        status: VocabStatus;
+      }>,
+    ) => {
+      const next = {
+        term: (override?.term ?? term).trim() || word.term,
+        reading: (override?.reading ?? reading).trim(),
+        partOfSpeech: (override?.partOfSpeech ?? partOfSpeech).trim(),
+        translation: (override?.translation ?? translation).trim(),
+        explanation: (override?.explanation ?? explanation).trim(),
+        status: override?.status ?? status,
+      };
+
+      const changed =
+        next.term !== word.term ||
+        next.reading !== word.reading ||
+        next.partOfSpeech !== word.partOfSpeech ||
+        next.translation !== word.translation ||
+        next.explanation !== word.explanation ||
+        next.status !== word.status;
+
+      if (!changed) {
+        return;
+      }
+      await onSave(word.id, next);
+    },
+    [term, reading, partOfSpeech, translation, explanation, status, word, onSave],
+  );
+
+  const persistAndClose = useCallback(async () => {
+    await savePatchIfDirty();
     onClose();
-  }
+  }, [savePatchIfDirty, onClose]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        persistAndClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [persistAndClose]);
 
   async function handleAddExample() {
     if (!exampleSentence.trim()) {
@@ -113,6 +152,48 @@ function WordDetailModalContent({
     setExampleSentence('');
     setExampleTranslation('');
     await onAddManualExample(word.id, sentence, trans);
+  }
+
+  async function handleMoveExample(exampleId: string, delta: -1 | 1) {
+    const ids = word.examples.map((ex) => ex.id);
+    const idx = ids.indexOf(exampleId);
+    const nextIdx = idx + delta;
+    if (idx < 0 || nextIdx < 0 || nextIdx >= ids.length) {
+      return;
+    }
+    const reordered = [...ids];
+    const [moved] = reordered.splice(idx, 1);
+    reordered.splice(nextIdx, 0, moved);
+    await onReorderExamples(word.id, reordered);
+  }
+
+  async function handleDropExample(
+    draggedId: string,
+    targetId: string,
+    position: 'before' | 'after',
+  ) {
+    setDraggingExampleId(null);
+    setExampleDropTarget(null);
+    if (!draggedId || draggedId === targetId) {
+      return;
+    }
+    const ids = word.examples.map((ex) => ex.id).filter((id) => id !== draggedId);
+    const targetIdx = ids.indexOf(targetId);
+    if (targetIdx < 0) {
+      return;
+    }
+    const insertIdx = position === 'before' ? targetIdx : targetIdx + 1;
+    ids.splice(insertIdx, 0, draggedId);
+    await onReorderExamples(word.id, ids);
+  }
+
+  function resolveExampleDropPos(event: WebDomDragEvent): 'before' | 'after' {
+    const el = event.currentTarget as HTMLElement | null;
+    if (!el || typeof el.getBoundingClientRect !== 'function') {
+      return 'after';
+    }
+    const rect = el.getBoundingClientRect();
+    return event.clientY - rect.top < rect.height / 2 ? 'before' : 'after';
   }
 
   async function handleDelete() {
@@ -134,7 +215,7 @@ function WordDetailModalContent({
     if (item === 'learning') {
       return { bg: colors.warningBg, fg: colors.warning, border: colors.warning };
     }
-    return { bg: colors.accent, fg: colors.accentText, border: colors.accent };
+    return { bg: colors.surfaceActive, fg: colors.text, border: colors.text };
   }
 
   return (
@@ -181,7 +262,7 @@ function WordDetailModalContent({
             keyboardShouldPersistTaps="handled">
             {/* Status selector */}
             <View style={styles.pillRow}>
-              {STATUS_LIST.map((item) => {
+              {VOCAB_STATUS_ORDER.map((item) => {
                 const selected = status === item;
                 const sc = statusColors(item, selected);
                 return (
@@ -189,12 +270,18 @@ function WordDetailModalContent({
                     key={item}
                     onPress={() => {
                       setStatus(item);
-                      savePatch({ status: item });
+                      savePatchIfDirty({ status: item });
                     }}
                     style={StyleSheet.flatten([
                       styles.statusPill,
                       { backgroundColor: sc.bg, borderColor: sc.border },
                     ])}>
+                    <View
+                      style={[
+                        styles.statusDot,
+                        { backgroundColor: VOCAB_STATUS_META[item].dotColor },
+                      ]}
+                    />
                     <Text style={[styles.statusPillText, { color: sc.fg }]}>
                       {VOCAB_STATUS_META[item].label}
                     </Text>
@@ -206,7 +293,7 @@ function WordDetailModalContent({
             <TextInput
               value={term}
               onChangeText={setTerm}
-              onBlur={() => savePatch()}
+              onBlur={() => savePatchIfDirty()}
               placeholder="Слово или фраза"
               placeholderTextColor={colors.muted}
               style={[styles.termInput, { color: colors.text }]}
@@ -216,7 +303,7 @@ function WordDetailModalContent({
               <TextInput
                 value={reading}
                 onChangeText={setReading}
-                onBlur={() => savePatch()}
+                onBlur={() => savePatchIfDirty()}
                 placeholder="Транскрипция / чтение"
                 placeholderTextColor={colors.muted}
                 style={[
@@ -232,7 +319,7 @@ function WordDetailModalContent({
               <TextInput
                 value={partOfSpeech}
                 onChangeText={setPartOfSpeech}
-                onBlur={() => savePatch()}
+                onBlur={() => savePatchIfDirty()}
                 placeholder="Часть речи"
                 placeholderTextColor={colors.muted}
                 style={[
@@ -252,7 +339,7 @@ function WordDetailModalContent({
               <TextInput
                 value={translation}
                 onChangeText={setTranslation}
-                onBlur={() => savePatch()}
+                onBlur={() => savePatchIfDirty()}
                 placeholder="Значение на родном языке…"
                 placeholderTextColor={colors.muted}
                 style={[
@@ -267,13 +354,11 @@ function WordDetailModalContent({
             </View>
 
             <View style={styles.field}>
-              <Text style={[styles.label, { color: colors.muted }]}>
-                Нюансы и описание
-              </Text>
+              <Text style={[styles.label, { color: colors.muted }]}>Нюансы и описание</Text>
               <TextInput
                 value={explanation}
                 onChangeText={setExplanation}
-                onBlur={() => savePatch()}
+                onBlur={() => savePatchIfDirty()}
                 multiline
                 textAlignVertical="top"
                 placeholder="Контекст, оттенки смысла, сочетания…"
@@ -321,36 +406,125 @@ function WordDetailModalContent({
                     Примеров пока нет — сгенерируйте через ИИ или добавьте свой ниже.
                   </Text>
                 ) : (
-                  word.examples.map((ex) => (
-                    <Animated.View
-                      key={ex.id}
-                      entering={FadeInDown.duration(140)}
-                      exiting={FadeOut.duration(120)}
-                      style={[
-                        styles.exampleCard,
-                        { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
-                      ]}>
-                      <View style={styles.exampleTop}>
-                        <Text style={[styles.exampleSentence, { color: colors.text }]}>
-                          {ex.sentence}
-                        </Text>
-                        <RipplePressable
-                          accessibilityLabel="Удалить пример"
-                          onPress={() => onDeleteExample(ex.id)}
-                          style={styles.exampleDel}>
-                          <AppIcon name="close" size="xs" color={colors.muted} />
-                        </RipplePressable>
-                      </View>
-                      {ex.translation ? (
-                        <Text style={[styles.exampleTranslation, { color: colors.muted }]}>
-                          {ex.translation}
-                        </Text>
-                      ) : null}
-                      {ex.note ? (
-                        <Text style={[styles.exampleNote, { color: colors.muted }]}>{ex.note}</Text>
-                      ) : null}
-                    </Animated.View>
-                  ))
+                  word.examples.map((ex, idx) => {
+                    const dropPos =
+                      exampleDropTarget?.id === ex.id ? exampleDropTarget.position : null;
+                    return (
+                      <Animated.View
+                        key={ex.id}
+                        entering={FadeInDown.duration(140)}
+                        exiting={FadeOut.duration(120)}
+                        style={[
+                          styles.exampleWrap,
+                          draggingExampleId === ex.id ? styles.dragging : null,
+                        ]}>
+                        {dropPos === 'before' ? (
+                          <View pointerEvents="none" style={[styles.dropLine, styles.dropBefore]} />
+                        ) : null}
+
+                        <WebDragBox
+                          draggable={Platform.OS === 'web' && word.examples.length > 1}
+                          onDragStart={(event) => {
+                            event.stopPropagation();
+                            if (event.dataTransfer) {
+                              event.dataTransfer.effectAllowed = 'move';
+                              event.dataTransfer.setData(EXAMPLE_DRAG_MIME, ex.id);
+                            }
+                            setDraggingExampleId(ex.id);
+                          }}
+                          onDragEnd={() => {
+                            setDraggingExampleId(null);
+                            setExampleDropTarget(null);
+                          }}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            if (event.dataTransfer) {
+                              event.dataTransfer.dropEffect = 'move';
+                            }
+                            const pos = resolveExampleDropPos(event);
+                            setExampleDropTarget((prev) =>
+                              prev?.id === ex.id && prev.position === pos
+                                ? prev
+                                : { id: ex.id, position: pos },
+                            );
+                          }}
+                          onDragLeave={() => {
+                            setExampleDropTarget((prev) => (prev?.id === ex.id ? null : prev));
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            const draggedId = event.dataTransfer?.getData(EXAMPLE_DRAG_MIME) ?? '';
+                            handleDropExample(draggedId, ex.id, resolveExampleDropPos(event));
+                          }}
+                          style={[
+                            styles.exampleCard,
+                            { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
+                            Platform.OS === 'web' && word.examples.length > 1
+                              ? styles.exampleDraggable
+                              : null,
+                          ]}>
+                          <View style={styles.exampleTop}>
+                            {Platform.OS === 'web' && word.examples.length > 1 ? (
+                              <View style={styles.exampleGrip}>
+                                <AppIcon name="grip" size="xs" color={colors.muted} />
+                              </View>
+                            ) : null}
+                            <Text style={[styles.exampleSentence, { color: colors.text }]}>
+                              {ex.sentence}
+                            </Text>
+                            <View style={styles.exampleBtns}>
+                              {word.examples.length > 1 ? (
+                                <>
+                                  <RipplePressable
+                                    accessibilityLabel="Выше"
+                                    disabled={idx === 0}
+                                    onPress={() => handleMoveExample(ex.id, -1)}
+                                    style={StyleSheet.flatten([
+                                      styles.exampleIconBtn,
+                                      idx === 0 ? styles.disabled : null,
+                                    ])}>
+                                    <AppIcon name="arrowUp" size={12} color={colors.muted} />
+                                  </RipplePressable>
+                                  <RipplePressable
+                                    accessibilityLabel="Ниже"
+                                    disabled={idx === word.examples.length - 1}
+                                    onPress={() => handleMoveExample(ex.id, 1)}
+                                    style={StyleSheet.flatten([
+                                      styles.exampleIconBtn,
+                                      idx === word.examples.length - 1 ? styles.disabled : null,
+                                    ])}>
+                                    <AppIcon name="arrowDown" size={12} color={colors.muted} />
+                                  </RipplePressable>
+                                </>
+                              ) : null}
+                              <RipplePressable
+                                accessibilityLabel="Удалить пример"
+                                onPress={() => onDeleteExample(ex.id)}
+                                style={styles.exampleIconBtn}>
+                                <AppIcon name="close" size="xs" color={colors.muted} />
+                              </RipplePressable>
+                            </View>
+                          </View>
+                          {ex.translation ? (
+                            <Text style={[styles.exampleTranslation, { color: colors.muted }]}>
+                              {ex.translation}
+                            </Text>
+                          ) : null}
+                          {ex.note ? (
+                            <Text style={[styles.exampleNote, { color: colors.muted }]}>
+                              {ex.note}
+                            </Text>
+                          ) : null}
+                        </WebDragBox>
+
+                        {dropPos === 'after' ? (
+                          <View pointerEvents="none" style={[styles.dropLine, styles.dropAfter]} />
+                        ) : null}
+                      </Animated.View>
+                    );
+                  })
                 )}
               </View>
 
@@ -383,7 +557,8 @@ function WordDetailModalContent({
                       { backgroundColor: colors.surface },
                       exampleSentence.trim().length === 0 ? styles.disabled : null,
                     ])}>
-                    <Text style={[styles.addExLabel, { color: colors.text }]}>+ Добавить</Text>
+                    <AppIcon name="plus" size="xs" color={colors.text} />
+                    <Text style={[styles.addExLabel, { color: colors.text }]}>Добавить</Text>
                   </RipplePressable>
                 </View>
               </View>
@@ -397,6 +572,11 @@ function WordDetailModalContent({
                 styles.deleteBtn,
                 { backgroundColor: confirmDelete ? colors.danger : colors.dangerBg },
               ])}>
+              <AppIcon
+                name="trash"
+                size="xs"
+                color={confirmDelete ? '#FFFFFF' : colors.danger}
+              />
               <Text
                 style={[
                   styles.deleteLabel,
@@ -487,10 +667,18 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   statusPill: {
-    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 11,
     paddingVertical: 7,
     borderRadius: 10,
     borderWidth: StyleSheet.hairlineWidth,
+  },
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
   },
   statusPillText: {
     fontSize: 13,
@@ -564,16 +752,49 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
   },
+  exampleWrap: {
+    position: 'relative',
+  },
+  dragging: {
+    opacity: 0.35,
+  },
+  dropLine: {
+    position: 'absolute',
+    left: 6,
+    right: 6,
+    height: 2.5,
+    borderRadius: 2,
+    backgroundColor: DROP_BLUE,
+    zIndex: 10,
+  },
+  dropBefore: {
+    top: -4,
+  },
+  dropAfter: {
+    bottom: -4,
+  },
   exampleCard: {
     borderRadius: 11,
     borderWidth: StyleSheet.hairlineWidth,
     padding: 11,
     gap: 4,
   },
+  exampleDraggable: {
+    ...(Platform.OS === 'web'
+      ? ({
+          cursor: 'grab',
+          userSelect: 'none',
+        } as object)
+      : null),
+  },
   exampleTop: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 8,
+    gap: 6,
+  },
+  exampleGrip: {
+    marginTop: 3,
+    opacity: 0.45,
   },
   exampleSentence: {
     flex: 1,
@@ -581,16 +802,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     lineHeight: 20,
   },
-  exampleDel: {
+  exampleBtns: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  exampleIconBtn: {
     width: 24,
     height: 24,
     borderRadius: 6,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  exampleDelGlyph: {
-    fontSize: 16,
-    lineHeight: 18,
   },
   exampleTranslation: {
     fontSize: 13,
@@ -616,6 +838,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   addExBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     paddingHorizontal: 10,
     paddingVertical: 7,
     borderRadius: 8,
@@ -635,6 +860,9 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   deleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     paddingHorizontal: 14,
     paddingVertical: 9,
     borderRadius: 10,

@@ -8,6 +8,7 @@ import { migration004AuthRbac } from '@/db/migrations/004_auth_rbac';
 import { migration005Notes } from '@/db/migrations/005_notes';
 import { migration006LanguageLab } from '@/db/migrations/006_language_lab';
 import { migration007NotesNotionV2 } from '@/db/migrations/007_notes_notion_v2';
+import { migration008LanguageLabV2 } from '@/db/migrations/008_language_lab_v2';
 
 export const MIGRATIONS: readonly Migration[] = [
   migration001Initial,
@@ -17,6 +18,7 @@ export const MIGRATIONS: readonly Migration[] = [
   migration005Notes,
   migration006LanguageLab,
   migration007NotesNotionV2,
+  migration008LanguageLabV2,
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;

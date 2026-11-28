@@ -1,6 +1,7 @@
 import type { SentenceGrammarRule, SentenceToken } from '@/services/ai/language-ai';
 
 export type VocabStatus = 'new' | 'learning' | 'known';
+export type VocabSortMode = 'manual' | 'recent' | 'alpha';
 
 export type LanguageRecord = {
   id: string;
@@ -9,6 +10,7 @@ export type LanguageRecord = {
   name: string;
   nativeLang: string;
   isDefault: boolean;
+  position: number;
   createdAt: string;
 };
 
@@ -19,6 +21,7 @@ export type VocabExampleRecord = {
   translation: string;
   note: string;
   source: 'manual' | 'ai';
+  position: number;
   createdAt: string;
 };
 
@@ -33,6 +36,7 @@ export type VocabWordRecord = {
   explanation: string;
   status: VocabStatus;
   reviewCount: number;
+  position: number;
   createdAt: string;
   updatedAt: string;
   examples: VocabExampleRecord[];
@@ -47,16 +51,43 @@ export type AnalyzedSentenceRecord = {
   grammarSummary: string;
   rules: SentenceGrammarRule[];
   tokens: SentenceToken[];
+  position: number;
   createdAt: string;
 };
 
+export type SentenceWordLinkRecord = {
+  id: string;
+  sentenceId: string;
+  wordId: string;
+  surfaceForm: string;
+};
+
+export type LanguageSnapshot = {
+  words: VocabWordRecord[];
+  sentences: AnalyzedSentenceRecord[];
+  links: SentenceWordLinkRecord[];
+};
+
+export type LanguageStat = {
+  wordCount: number;
+  sentenceCount: number;
+};
+
+export const VOCAB_STATUS_ORDER: readonly VocabStatus[] = ['new', 'learning', 'known'];
+
 export const VOCAB_STATUS_META: Record<
   VocabStatus,
-  { label: string; next: VocabStatus }
+  { label: string; pluralLabel: string; next: VocabStatus; dotColor: string }
 > = {
-  new: { label: 'Новое', next: 'learning' },
-  learning: { label: 'Учу', next: 'known' },
-  known: { label: 'Знаю', next: 'new' },
+  new: { label: 'Новое', pluralLabel: 'Новые', next: 'learning', dotColor: '#8B909C' },
+  learning: { label: 'Учу', pluralLabel: 'Учу', next: 'known', dotColor: '#F59E0B' },
+  known: { label: 'Знаю', pluralLabel: 'Знаю', next: 'new', dotColor: '#34C759' },
+};
+
+export const VOCAB_SORT_META: Record<VocabSortMode, { label: string }> = {
+  manual: { label: 'Мой порядок' },
+  recent: { label: 'Новые сверху' },
+  alpha: { label: 'По алфавиту' },
 };
 
 export const LANGUAGE_PRESETS = [

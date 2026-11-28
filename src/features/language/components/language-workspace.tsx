@@ -1,49 +1,83 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { type ComponentRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 
+import {
+  AnchoredPopover,
+  type AnchorRect,
+  measureAnchor,
+} from '@/components/anchored-popover';
 import { AppIcon } from '@/components/app-icon';
+import { DragTrashZone } from '@/components/drag-trash-zone';
 import { RipplePressable } from '@/components/ripple-pressable';
+import { HistoryToast, UndoRedoButtons } from '@/components/undo-redo-bar';
+import { WebDragBox, type WebDomDragEvent } from '@/components/web-drag-box';
 import { useDatabase } from '@/db/provider';
 import { useAuth } from '@/features/auth/auth-context';
 import { AddLanguageDialog } from '@/features/language/components/add-language-dialog';
+import { CreateWordModal } from '@/features/language/components/create-word-modal';
+import {
+  SENTENCE_DRAG_MIME,
+  SentenceCardItem,
+} from '@/features/language/components/sentence-card-item';
+import {
+  WORD_DRAG_MIME,
+  WordCardItem,
+} from '@/features/language/components/word-card-item';
 import { WordDetailModal } from '@/features/language/components/word-detail-modal';
 import {
   addVocabExamples,
+  captureLanguageSnapshot,
   createLanguage,
   createVocabWord,
   deleteAnalyzedSentence,
+  deleteLanguage,
   deleteVocabExample,
   deleteVocabWord,
   ensureDefaultLanguage,
+  getLanguageStats,
   linkWordToSentence,
   listAnalyzedSentences,
   listLanguages,
   listVocabWords,
+  reorderAnalyzedSentences,
+  reorderVocabExamples,
+  reorderVocabWords,
+  restoreLanguageSnapshot,
   saveAnalyzedSentence,
   setVocabWordStatus,
+  updateLanguage,
   updateVocabWord,
 } from '@/features/language/language-repository';
 import {
   type AnalyzedSentenceRecord,
   type LanguageRecord,
+  type LanguageSnapshot,
+  type LanguageStat,
+  VOCAB_SORT_META,
   VOCAB_STATUS_META,
+  VOCAB_STATUS_ORDER,
+  type VocabSortMode,
   type VocabStatus,
   type VocabWordRecord,
 } from '@/features/language/types';
-import type { SentenceToken } from '@/services/ai/language-ai';
+import { useUndoRedoHotkeys } from '@/hooks/use-undo-redo';
+import type { GeneratedExample, SentenceToken, WordAnalysisResult } from '@/services/ai/language-ai';
 import { getLanguageAIProvider } from '@/services/ai/mock-language-ai';
 import { useThemeColors, useViewport } from '@/theme/colors';
 
 type LabTab = 'vocab' | 'sentences';
 type StatusFilter = 'all' | VocabStatus;
+
+const SORT_MODES: readonly VocabSortMode[] = ['manual', 'recent', 'alpha'];
+const MAX_HISTORY = 50;
 
 export function LanguageWorkspace() {
   const db = useDatabase();
@@ -54,6 +88,7 @@ export function LanguageWorkspace() {
   const aiProvider = getLanguageAIProvider();
 
   const [languages, setLanguages] = useState<LanguageRecord[]>([]);
+  const [langStats, setLangStats] = useState<Record<string, LanguageStat>>({});
   const [activeLangId, setActiveLangId] = useState<string | null>(null);
   const [words, setWords] = useState<VocabWordRecord[]>([]);
   const [sentences, setSentences] = useState<AnalyzedSentenceRecord[]>([]);
@@ -61,32 +96,189 @@ export function LanguageWorkspace() {
 
   const [tab, setTab] = useState<LabTab>('vocab');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [sortMode, setSortMode] = useState<VocabSortMode>('manual');
   const [search, setSearch] = useState('');
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [knownExpanded, setKnownExpanded] = useState(false);
 
-  const [wordDraft, setWordDraft] = useState('');
+  const [quickWordDraft, setQuickWordDraft] = useState('');
   const [sentenceDraft, setSentenceDraft] = useState('');
   const [aiBusy, setAiBusy] = useState<'word' | 'examples' | 'sentence' | null>(null);
 
   const [selectedWordId, setSelectedWordId] = useState<string | null>(null);
-  const [addLangOpen, setAddLangOpen] = useState(false);
-  const [confirmDeleteSentenceId, setConfirmDeleteSentenceId] = useState<string | null>(null);
+  const [createWordOpen, setCreateWordOpen] = useState(false);
+  const [langDialog, setLangDialog] = useState<{
+    open: boolean;
+    mode: 'create' | 'edit';
+    language: LanguageRecord | null;
+  }>({ open: false, mode: 'create', language: null });
+
+  // Toolbar Popovers
+  const [langMenuOpen, setLangMenuOpen] = useState(false);
+  const [langMenuAnchor, setLangMenuAnchor] = useState<AnchorRect | null>(null);
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  const [sortMenuAnchor, setSortMenuAnchor] = useState<AnchorRect | null>(null);
+
+  const langMenuBtnRef = useRef<ComponentRef<typeof View>>(null);
+  const sortMenuBtnRef = useRef<ComponentRef<typeof View>>(null);
+  const sentenceInputRef = useRef<ComponentRef<typeof TextInput>>(null);
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
+
+  // Drag-and-drop state
+  const [draggingWordId, setDraggingWordId] = useState<string | null>(null);
+  const [wordDropTarget, setWordDropTarget] = useState<{
+    id: string;
+    position: 'before' | 'after';
+  } | null>(null);
+  const [statusDropHover, setStatusDropHover] = useState<VocabStatus | null>(null);
+  const [knownSectionHover, setKnownSectionHover] = useState(false);
+
+  const [draggingSentenceId, setDraggingSentenceId] = useState<string | null>(null);
+  const [sentenceDropTarget, setSentenceDropTarget] = useState<{
+    id: string;
+    position: 'before' | 'after';
+  } | null>(null);
+
+  // Undo / Redo state per language
+  const historyByLangRef = useRef<
+    Map<string, { past: LanguageSnapshot[]; future: LanguageSnapshot[] }>
+  >(new Map());
+  const [historyMeta, setHistoryMeta] = useState({ canUndo: false, canRedo: false });
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const historyBusyRef = useRef(false);
+
+  const showToast = useCallback((message: string) => {
+    setToastMessage(message);
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = setTimeout(() => {
+      setToastMessage(null);
+    }, 1800);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
+
+  const syncHistoryMeta = useCallback((langId: string | null) => {
+    if (!langId) {
+      setHistoryMeta({ canUndo: false, canRedo: false });
+      return;
+    }
+    const entry = historyByLangRef.current.get(langId);
+    setHistoryMeta({
+      canUndo: (entry?.past.length ?? 0) > 0,
+      canRedo: (entry?.future.length ?? 0) > 0,
+    });
+  }, []);
 
   const refreshLanguageData = useCallback(
     async (langId: string) => {
       if (!userId) {
         return;
       }
-      const [nextLangs, nextWords, nextSentences] = await Promise.all([
+      const [nextLangs, nextStats, nextWords, nextSentences] = await Promise.all([
         listLanguages(db, userId),
+        getLanguageStats(db, userId),
         listVocabWords(db, userId, langId),
         listAnalyzedSentences(db, userId, langId),
       ]);
       setLanguages(nextLangs);
+      setLangStats(nextStats);
       setWords(nextWords);
       setSentences(nextSentences);
     },
     [db, userId],
   );
+
+  const pushUndoSnapshot = useCallback(
+    async (langId: string) => {
+      if (!userId) {
+        return;
+      }
+      const snap = await captureLanguageSnapshot(db, userId, langId);
+      let entry = historyByLangRef.current.get(langId);
+      if (!entry) {
+        entry = { past: [], future: [] };
+        historyByLangRef.current.set(langId, entry);
+      }
+      entry.past.push(snap);
+      if (entry.past.length > MAX_HISTORY) {
+        entry.past.shift();
+      }
+      entry.future = [];
+      syncHistoryMeta(langId);
+    },
+    [db, userId, syncHistoryMeta],
+  );
+
+  const handleUndo = useCallback(async () => {
+    if (!activeLangId || !userId || historyBusyRef.current) {
+      return;
+    }
+    const entry = historyByLangRef.current.get(activeLangId);
+    if (!entry || entry.past.length === 0) {
+      return;
+    }
+    historyBusyRef.current = true;
+    try {
+      const current = await captureLanguageSnapshot(db, userId, activeLangId);
+      const previous = entry.past.pop();
+      if (!previous) {
+        return;
+      }
+      entry.future.push(current);
+      await restoreLanguageSnapshot(db, userId, activeLangId, previous);
+      await refreshLanguageData(activeLangId);
+      syncHistoryMeta(activeLangId);
+      showToast('Отменено');
+    } finally {
+      historyBusyRef.current = false;
+    }
+  }, [activeLangId, userId, db, refreshLanguageData, syncHistoryMeta, showToast]);
+
+  const handleRedo = useCallback(async () => {
+    if (!activeLangId || !userId || historyBusyRef.current) {
+      return;
+    }
+    const entry = historyByLangRef.current.get(activeLangId);
+    if (!entry || entry.future.length === 0) {
+      return;
+    }
+    historyBusyRef.current = true;
+    try {
+      const current = await captureLanguageSnapshot(db, userId, activeLangId);
+      const next = entry.future.pop();
+      if (!next) {
+        return;
+      }
+      entry.past.push(current);
+      await restoreLanguageSnapshot(db, userId, activeLangId, next);
+      await refreshLanguageData(activeLangId);
+      syncHistoryMeta(activeLangId);
+      showToast('Возвращено');
+    } finally {
+      historyBusyRef.current = false;
+    }
+  }, [activeLangId, userId, db, refreshLanguageData, syncHistoryMeta, showToast]);
+
+  useUndoRedoHotkeys({
+    enabled:
+      Boolean(activeLangId) && !createWordOpen && !selectedWordId && !langDialog.open,
+    ignoreInsideInputs: true,
+    onUndo: () => {
+      handleUndo();
+    },
+    onRedo: () => {
+      handleRedo();
+    },
+  });
 
   useEffect(() => {
     if (!userId) {
@@ -99,8 +291,13 @@ export function LanguageWorkspace() {
       if (cancelled) {
         return;
       }
-      setLanguages(initialLangs);
       const firstId = initialLangs[0]?.id ?? null;
+      const stats = await getLanguageStats(db, userId);
+      if (cancelled) {
+        return;
+      }
+      setLanguages(initialLangs);
+      setLangStats(stats);
       if (firstId) {
         const [initialWords, initialSentences] = await Promise.all([
           listVocabWords(db, userId, firstId),
@@ -110,6 +307,7 @@ export function LanguageWorkspace() {
           setActiveLangId(firstId);
           setWords(initialWords);
           setSentences(initialSentences);
+          syncHistoryMeta(firstId);
         }
       }
       if (!cancelled) {
@@ -122,7 +320,7 @@ export function LanguageWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [db, userId]);
+  }, [db, userId, syncHistoryMeta]);
 
   const activeLanguage = useMemo(
     () => languages.find((lang) => lang.id === activeLangId) ?? null,
@@ -159,34 +357,75 @@ export function LanguageWorkspace() {
     };
   }, [words]);
 
+  const sortedWords = useMemo(() => {
+    const list = [...words];
+    if (sortMode === 'recent') {
+      list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    } else if (sortMode === 'alpha') {
+      list.sort((a, b) => a.term.localeCompare(b.term, undefined, { sensitivity: 'base' }));
+    } else {
+      list.sort((a, b) => a.position - b.position);
+    }
+    return list;
+  }, [words, sortMode]);
+
   const filteredWords = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return words.filter((word) => {
+    return sortedWords.filter((word) => {
       if (statusFilter !== 'all' && word.status !== statusFilter) {
         return false;
       }
       if (query.length > 0) {
-        const hay = `${word.term} ${word.translation} ${word.reading}`.toLowerCase();
+        const hay = `${word.term} ${word.translation} ${word.reading} ${word.explanation}`.toLowerCase();
         if (!hay.includes(query)) {
           return false;
         }
       }
       return true;
     });
-  }, [words, statusFilter, search]);
+  }, [sortedWords, statusFilter, search]);
+
+  const shouldSplitKnown = statusFilter === 'all' && search.trim().length === 0;
+
+  const activeWords = useMemo(
+    () => (shouldSplitKnown ? filteredWords.filter((w) => w.status !== 'known') : filteredWords),
+    [filteredWords, shouldSplitKnown],
+  );
+
+  const knownWords = useMemo(
+    () => (shouldSplitKnown ? filteredWords.filter((w) => w.status === 'known') : []),
+    [filteredWords, shouldSplitKnown],
+  );
+
+  const filteredSentences = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) {
+      return sentences;
+    }
+    return sentences.filter((item) => {
+      const tokenText = item.tokens.map((t) => `${t.surface} ${t.translation}`).join(' ');
+      const hay = `${item.originalText} ${item.translation} ${item.grammarSummary} ${tokenText}`.toLowerCase();
+      return hay.includes(query);
+    });
+  }, [sentences, search]);
 
   const selectedWord = useMemo(
     () => words.find((item) => item.id === selectedWordId) ?? null,
     [words, selectedWordId],
   );
 
+  const masteryPct = words.length > 0 ? Math.round((statusCounts.known / words.length) * 100) : 0;
+
+  // Language CRUD
   async function selectLanguage(langId: string) {
     if (langId === activeLangId) {
       return;
     }
     setActiveLangId(langId);
     setSelectedWordId(null);
+    setSearch('');
     await refreshLanguageData(langId);
+    syncHistoryMeta(langId);
   }
 
   async function handleCreateLanguage(input: { code: string; name: string }) {
@@ -195,70 +434,129 @@ export function LanguageWorkspace() {
     }
     const created = await createLanguage(db, userId, input);
     setActiveLangId(created.id);
+    setSearch('');
     await refreshLanguageData(created.id);
+    syncHistoryMeta(created.id);
   }
 
-  async function handleAddWordWithAI() {
-    if (!activeLanguage || !userId || aiBusy) {
-      return;
-    }
-    const term = wordDraft.trim();
-    if (!term) {
-      return;
-    }
-
-    setAiBusy('word');
-    try {
-      const analysis = await aiProvider.analyzeWord({
-        term,
-        targetLangCode: activeLanguage.code,
-        targetLangName: activeLanguage.name,
-        nativeLangCode: activeLanguage.nativeLang,
-      });
-
-      const createdId = await createVocabWord(db, userId, activeLanguage.id, {
-        term: analysis.term,
-        reading: analysis.reading,
-        partOfSpeech: analysis.partOfSpeech,
-        translation: analysis.translation,
-        explanation: analysis.explanation,
-        status: 'new',
-        aiPayload: analysis,
-        examples: analysis.examples,
-        source: 'ai',
-      });
-
-      setWordDraft('');
-      await refreshLanguageData(activeLanguage.id);
-      setSelectedWordId(createdId);
-    } finally {
-      setAiBusy(null);
+  async function handleUpdateLanguage(languageId: string, input: { code: string; name: string }) {
+    await updateLanguage(db, languageId, input);
+    if (activeLangId) {
+      await refreshLanguageData(activeLangId);
     }
   }
 
-  async function handleAddWordManual() {
+  async function handleDeleteLanguage(languageId: string) {
+    if (languages.length <= 1) {
+      return;
+    }
+    await deleteLanguage(db, languageId);
+    historyByLangRef.current.delete(languageId);
+    const remaining = languages.filter((lang) => lang.id !== languageId);
+    const nextLangId =
+      activeLangId === languageId ? (remaining[0]?.id ?? null) : activeLangId;
+    setActiveLangId(nextLangId);
+    if (nextLangId) {
+      await refreshLanguageData(nextLangId);
+      syncHistoryMeta(nextLangId);
+    }
+  }
+
+  // Word CRUD & Quick Add
+  async function handleAnalyzeWordDraft(term: string): Promise<WordAnalysisResult> {
+    if (!activeLanguage) {
+      throw new Error('No active language');
+    }
+    return aiProvider.analyzeWord({
+      term,
+      targetLangCode: activeLanguage.code,
+      targetLangName: activeLanguage.name,
+      nativeLangCode: activeLanguage.nativeLang,
+    });
+  }
+
+  async function handleCreateWordFromModal(input: {
+    term: string;
+    reading: string;
+    partOfSpeech: string;
+    translation: string;
+    explanation: string;
+    status: VocabStatus;
+    examples: GeneratedExample[];
+    aiPayload: WordAnalysisResult | null;
+    source: 'manual' | 'ai';
+  }) {
     if (!activeLanguage || !userId) {
       return;
     }
-    const term = wordDraft.trim();
+    await pushUndoSnapshot(activeLanguage.id);
+    await createVocabWord(db, userId, activeLanguage.id, input);
+    await refreshLanguageData(activeLanguage.id);
+  }
+
+  async function handleQuickAddWord(withAI: boolean) {
+    if (!activeLanguage || !userId || aiBusy) {
+      return;
+    }
+    const term = quickWordDraft.trim();
     if (!term) {
       return;
     }
-    const createdId = await createVocabWord(db, userId, activeLanguage.id, {
-      term,
-      status: 'new',
-      source: 'manual',
-    });
-    setWordDraft('');
-    await refreshLanguageData(activeLanguage.id);
-    setSelectedWordId(createdId);
-  }
 
-  async function handleCycleWordStatus(word: VocabWordRecord) {
-    if (!activeLangId) {
+    const existing = vocabByNormalizedTerm.get(term.toLowerCase());
+    if (existing) {
+      setQuickWordDraft('');
+      setSelectedWordId(existing.id);
+      showToast('Уже есть в словаре');
       return;
     }
-    const nextStatus = VOCAB_STATUS_META[word.status].next;
+
+    const initialStatus: VocabStatus =
+      statusFilter === 'learning' || statusFilter === 'known' ? statusFilter : 'new';
+
+    if (withAI) {
+      setAiBusy('word');
+      try {
+        await pushUndoSnapshot(activeLanguage.id);
+        const analysis = await aiProvider.analyzeWord({
+          term,
+          targetLangCode: activeLanguage.code,
+          targetLangName: activeLanguage.name,
+          nativeLangCode: activeLanguage.nativeLang,
+        });
+        await createVocabWord(db, userId, activeLanguage.id, {
+          term: analysis.term,
+          reading: analysis.reading,
+          partOfSpeech: analysis.partOfSpeech,
+          translation: analysis.translation,
+          explanation: analysis.explanation,
+          status: initialStatus,
+          aiPayload: analysis,
+          examples: analysis.examples,
+          source: 'ai',
+        });
+        setQuickWordDraft('');
+        await refreshLanguageData(activeLanguage.id);
+      } finally {
+        setAiBusy(null);
+      }
+    } else {
+      await pushUndoSnapshot(activeLanguage.id);
+      await createVocabWord(db, userId, activeLanguage.id, {
+        term,
+        status: initialStatus,
+        source: 'manual',
+      });
+      setQuickWordDraft('');
+      await refreshLanguageData(activeLanguage.id);
+    }
+  }
+
+  async function handleChangeWordStatus(word: VocabWordRecord, nextStatus: VocabStatus) {
+    if (!activeLangId || word.status === nextStatus) {
+      return;
+    }
+    await pushUndoSnapshot(activeLangId);
     await setVocabWordStatus(db, word.id, nextStatus);
     await refreshLanguageData(activeLangId);
   }
@@ -277,6 +575,7 @@ export function LanguageWorkspace() {
     if (!activeLangId) {
       return;
     }
+    await pushUndoSnapshot(activeLangId);
     await updateVocabWord(db, wordId, patch);
     await refreshLanguageData(activeLangId);
   }
@@ -285,8 +584,13 @@ export function LanguageWorkspace() {
     if (!activeLangId) {
       return;
     }
+    await pushUndoSnapshot(activeLangId);
     await deleteVocabWord(db, wordId);
+    if (selectedWordId === wordId) {
+      setSelectedWordId(null);
+    }
     await refreshLanguageData(activeLangId);
+    showToast('Слово удалено');
   }
 
   async function handleGenerateExamples(word: VocabWordRecord) {
@@ -295,6 +599,7 @@ export function LanguageWorkspace() {
     }
     setAiBusy('examples');
     try {
+      await pushUndoSnapshot(activeLanguage.id);
       const generated = await aiProvider.generateExamples({
         term: word.term,
         translation: word.translation,
@@ -305,6 +610,7 @@ export function LanguageWorkspace() {
       });
       await addVocabExamples(db, word.id, generated, 'ai');
       await refreshLanguageData(activeLanguage.id);
+      showToast('Примеры добавлены');
     } finally {
       setAiBusy(null);
     }
@@ -314,7 +620,17 @@ export function LanguageWorkspace() {
     if (!activeLangId) {
       return;
     }
+    await pushUndoSnapshot(activeLangId);
     await addVocabExamples(db, wordId, [{ sentence, translation, note: '' }], 'manual');
+    await refreshLanguageData(activeLangId);
+  }
+
+  async function handleReorderExamples(wordId: string, orderedIds: string[]) {
+    if (!activeLangId) {
+      return;
+    }
+    await pushUndoSnapshot(activeLangId);
+    await reorderVocabExamples(db, wordId, orderedIds);
     await refreshLanguageData(activeLangId);
   }
 
@@ -322,10 +638,111 @@ export function LanguageWorkspace() {
     if (!activeLangId) {
       return;
     }
+    await pushUndoSnapshot(activeLangId);
     await deleteVocabExample(db, exampleId);
     await refreshLanguageData(activeLangId);
   }
 
+  // Word Ordering & Drag
+  async function applyWordOrder(orderedIds: string[]) {
+    if (!activeLangId) {
+      return;
+    }
+    await pushUndoSnapshot(activeLangId);
+    await reorderVocabWords(db, orderedIds);
+    if (sortMode !== 'manual') {
+      setSortMode('manual');
+    }
+    await refreshLanguageData(activeLangId);
+  }
+
+  async function handleMoveWordByOffset(wordId: string, delta: -1 | 1, sectionList: VocabWordRecord[]) {
+    const idx = sectionList.findIndex((w) => w.id === wordId);
+    const targetIdx = idx + delta;
+    if (idx < 0 || targetIdx < 0 || targetIdx >= sectionList.length) {
+      return;
+    }
+    const targetId = sectionList[targetIdx].id;
+    const allIds = sortedWords.map((w) => w.id);
+    const fromAll = allIds.indexOf(wordId);
+    const toAll = allIds.indexOf(targetId);
+    if (fromAll < 0 || toAll < 0) {
+      return;
+    }
+    const nextIds = [...allIds];
+    nextIds.splice(fromAll, 1);
+    nextIds.splice(toAll, 0, wordId);
+    await applyWordOrder(nextIds);
+  }
+
+  async function handleDropWordOnWord(
+    draggedWordId: string,
+    targetWordId: string,
+    position: 'before' | 'after',
+  ) {
+    setDraggingWordId(null);
+    setWordDropTarget(null);
+    if (!activeLangId || draggedWordId === targetWordId) {
+      return;
+    }
+
+    const draggedWord = words.find((w) => w.id === draggedWordId);
+    const targetWord = words.find((w) => w.id === targetWordId);
+    if (!draggedWord || !targetWord) {
+      return;
+    }
+
+    const ids = sortedWords.map((w) => w.id).filter((id) => id !== draggedWordId);
+    const targetIndex = ids.indexOf(targetWordId);
+    if (targetIndex < 0) {
+      return;
+    }
+    const insertIndex = position === 'before' ? targetIndex : targetIndex + 1;
+    ids.splice(insertIndex, 0, draggedWordId);
+
+    await pushUndoSnapshot(activeLangId);
+
+    // If dropped between active & known sections in split view, sync status naturally
+    if (shouldSplitKnown) {
+      if (draggedWord.status !== 'known' && targetWord.status === 'known') {
+        await setVocabWordStatus(db, draggedWordId, 'known');
+      } else if (draggedWord.status === 'known' && targetWord.status !== 'known') {
+        await setVocabWordStatus(db, draggedWordId, 'learning');
+      }
+    }
+
+    await reorderVocabWords(db, ids);
+    if (sortMode !== 'manual') {
+      setSortMode('manual');
+    }
+    await refreshLanguageData(activeLangId);
+  }
+
+  async function handleDropWordOnStatus(event: WebDomDragEvent, targetStatus: VocabStatus) {
+    event.preventDefault();
+    event.stopPropagation();
+    setStatusDropHover(null);
+    setKnownSectionHover(false);
+    setDraggingWordId(null);
+    setWordDropTarget(null);
+
+    const draggedId =
+      event.dataTransfer?.getData(WORD_DRAG_MIME) ||
+      event.dataTransfer?.getData('text/plain') ||
+      draggingWordId ||
+      '';
+    if (!draggedId) {
+      return;
+    }
+    const word = words.find((w) => w.id === draggedId);
+    if (!word || word.status === targetStatus) {
+      return;
+    }
+    await handleChangeWordStatus(word, targetStatus);
+    showToast(`Статус: ${VOCAB_STATUS_META[targetStatus].label}`);
+  }
+
+  // Sentences CRUD & Ordering
   async function handleAnalyzeSentence() {
     if (!activeLanguage || !userId || aiBusy) {
       return;
@@ -337,6 +754,7 @@ export function LanguageWorkspace() {
 
     setAiBusy('sentence');
     try {
+      await pushUndoSnapshot(activeLanguage.id);
       const result = await aiProvider.analyzeSentence({
         sentence,
         targetLangCode: activeLanguage.code,
@@ -363,6 +781,7 @@ export function LanguageWorkspace() {
       return;
     }
 
+    await pushUndoSnapshot(activeLanguage.id);
     const createdId = await createVocabWord(db, userId, activeLanguage.id, {
       term: token.lemma || token.surface,
       partOfSpeech: token.partOfSpeech,
@@ -373,29 +792,131 @@ export function LanguageWorkspace() {
     });
     await linkWordToSentence(db, sentenceId, createdId, token.surface);
     await refreshLanguageData(activeLanguage.id);
+    showToast(`Добавлено: ${token.lemma || token.surface}`);
+  }
+
+  async function handleAddAllTokensToVocab(sentenceId: string, tokens: SentenceToken[]) {
+    if (!activeLanguage || !userId || tokens.length === 0) {
+      return;
+    }
+    await pushUndoSnapshot(activeLanguage.id);
+    let added = 0;
+    const seen = new Set<string>(vocabByNormalizedTerm.keys());
+
+    for (const token of tokens) {
+      const term = (token.lemma || token.surface).trim();
+      const key = term.toLowerCase();
+      if (!key || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      const createdId = await createVocabWord(db, userId, activeLanguage.id, {
+        term,
+        partOfSpeech: token.partOfSpeech,
+        translation: token.translation,
+        explanation: token.role ? `Роль в предложении: ${token.role}` : '',
+        status: 'new',
+        source: 'ai',
+      });
+      await linkWordToSentence(db, sentenceId, createdId, token.surface);
+      added += 1;
+    }
+
+    await refreshLanguageData(activeLanguage.id);
+    if (added > 0) {
+      showToast(`Добавлено слов: ${added}`);
+    }
   }
 
   async function handleDeleteSentence(sentenceId: string) {
     if (!activeLangId) {
       return;
     }
-    if (confirmDeleteSentenceId !== sentenceId) {
-      setConfirmDeleteSentenceId(sentenceId);
+    await pushUndoSnapshot(activeLangId);
+    await deleteAnalyzedSentence(db, sentenceId);
+    await refreshLanguageData(activeLangId);
+    showToast('Предложение удалено');
+  }
+
+  async function handleMoveSentenceByOffset(sentenceId: string, delta: -1 | 1) {
+    if (!activeLangId) {
       return;
     }
-    setConfirmDeleteSentenceId(null);
-    await deleteAnalyzedSentence(db, sentenceId);
+    const ids = sentences.map((s) => s.id);
+    const idx = ids.indexOf(sentenceId);
+    const nextIdx = idx + delta;
+    if (idx < 0 || nextIdx < 0 || nextIdx >= ids.length) {
+      return;
+    }
+    const reordered = [...ids];
+    const [moved] = reordered.splice(idx, 1);
+    reordered.splice(nextIdx, 0, moved);
+    await pushUndoSnapshot(activeLangId);
+    await reorderAnalyzedSentences(db, reordered);
     await refreshLanguageData(activeLangId);
   }
 
-  function statusStyle(status: VocabStatus) {
-    if (status === 'known') {
-      return { bg: colors.successBg, fg: colors.success };
+  async function handleDropSentence(
+    draggedId: string,
+    targetId: string,
+    position: 'before' | 'after',
+  ) {
+    setDraggingSentenceId(null);
+    setSentenceDropTarget(null);
+    if (!activeLangId || draggedId === targetId) {
+      return;
     }
-    if (status === 'learning') {
-      return { bg: colors.warningBg, fg: colors.warning };
+    const ids = sentences.map((s) => s.id).filter((id) => id !== draggedId);
+    const targetIdx = ids.indexOf(targetId);
+    if (targetIdx < 0) {
+      return;
     }
-    return { bg: colors.surfaceSubtle, fg: colors.muted };
+    const insertIdx = position === 'before' ? targetIdx : targetIdx + 1;
+    ids.splice(insertIdx, 0, draggedId);
+    await pushUndoSnapshot(activeLangId);
+    await reorderAnalyzedSentences(db, ids);
+    await refreshLanguageData(activeLangId);
+  }
+
+  async function handleCopyText(text: string) {
+    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast('Скопировано');
+      } catch {
+        // Ignore clipboard denial
+      }
+    }
+  }
+
+  // Drag Trash Drop Handler
+  async function handleDropToTrash(event: WebDomDragEvent) {
+    const wordId = event.dataTransfer?.getData(WORD_DRAG_MIME) || draggingWordId;
+    const sentId = event.dataTransfer?.getData(SENTENCE_DRAG_MIME) || draggingSentenceId;
+
+    setDraggingWordId(null);
+    setWordDropTarget(null);
+    setStatusDropHover(null);
+    setKnownSectionHover(false);
+    setDraggingSentenceId(null);
+    setSentenceDropTarget(null);
+
+    if (wordId && words.some((w) => w.id === wordId)) {
+      await handleDeleteWord(wordId);
+      return;
+    }
+    if (sentId && sentences.some((s) => s.id === sentId)) {
+      await handleDeleteSentence(sentId);
+    }
+  }
+
+  function handlePrimaryCTA() {
+    if (tab === 'vocab') {
+      setCreateWordOpen(true);
+    } else {
+      scrollRef.current?.scrollTo({ y: 0, animated: true });
+      sentenceInputRef.current?.focus();
+    }
   }
 
   if (loading || !activeLanguage) {
@@ -406,93 +927,275 @@ export function LanguageWorkspace() {
     );
   }
 
-  return (
-    <ScrollView
-      style={styles.scroll}
-      contentContainerStyle={[
-        styles.container,
-        isDesktop ? styles.containerDesktop : styles.containerMobile,
-      ]}
-      keyboardShouldPersistTaps="handled">
-      <View style={styles.inner}>
-        {/* Header + Languages */}
-        <View style={styles.header}>
-          <View style={styles.titleRow}>
-            <View style={styles.titleGroup}>
-              <Text style={[styles.title, { color: colors.text }]}>Изучение языков</Text>
-              <Text style={[styles.subtitle, { color: colors.muted }]}>
-                Личный словарь, примеры и разбор предложений на слова и правила
-              </Text>
-            </View>
+  const isDraggingAnything = draggingWordId !== null || draggingSentenceId !== null;
+  const trashLabel = draggingSentenceId ? 'Удалить предложение' : 'Удалить слово';
 
-            <View
-              style={[
-                styles.aiChip,
-                { backgroundColor: colors.surface, borderColor: colors.line },
-              ]}>
-              <View
-                style={[
-                  styles.aiDot,
-                  { backgroundColor: aiProvider.isMock ? colors.warning : colors.success },
-                ]}
-              />
-              <Text style={[styles.aiChipText, { color: colors.muted }]}>
-                {aiProvider.label}
+  return (
+    <View style={[styles.screen, isDesktop ? styles.screenDesktop : styles.screenMobile]}>
+      {/* Unified Clean Top Toolbar */}
+      <View style={styles.toolbar}>
+        <View style={styles.toolbarLeft}>
+          {/* Language Switcher Pill */}
+          <View ref={langMenuBtnRef} collapsable={false}>
+            <RipplePressable
+              accessibilityLabel="Выбрать или настроить язык"
+              onPress={() => {
+                if (langMenuOpen) {
+                  setLangMenuOpen(false);
+                  return;
+                }
+                measureAnchor(langMenuBtnRef.current, (rect) => {
+                  setLangMenuAnchor(rect);
+                  setLangMenuOpen(true);
+                });
+              }}
+              style={StyleSheet.flatten([
+                styles.langSwitcherBtn,
+                {
+                  backgroundColor: langMenuOpen ? colors.surfaceActive : colors.surface,
+                  borderColor: langMenuOpen ? colors.text : colors.line,
+                },
+              ])}>
+              <AppIcon name="language" size="sm" color={colors.muted} />
+              <Text style={[styles.langCodeTag, { color: colors.muted }]}>
+                {activeLanguage.code.toUpperCase()}
               </Text>
-            </View>
+              <Text style={[styles.langSwitcherName, { color: colors.text }]} numberOfLines={1}>
+                {activeLanguage.name}
+              </Text>
+              <AppIcon name="chevronDown" size="xs" color={colors.muted} />
+            </RipplePressable>
           </View>
 
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.langRow}>
-            {languages.map((lang) => {
-              const active = lang.id === activeLangId;
-              return (
-                <RipplePressable
-                  key={lang.id}
-                  onPress={() => selectLanguage(lang.id)}
-                  style={StyleSheet.flatten([
-                    styles.langPill,
-                    {
-                      backgroundColor: active ? colors.accent : colors.surface,
-                      borderColor: active ? colors.accent : colors.line,
-                    },
-                  ])}>
-                  <Text
-                    style={[
-                      styles.langCode,
-                      { color: active ? colors.accentText : colors.muted },
-                    ]}>
-                    {lang.code.toUpperCase()}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.langName,
-                      { color: active ? colors.accentText : colors.text },
-                    ]}>
-                    {lang.name}
-                  </Text>
-                </RipplePressable>
-              );
-            })}
-
-            <RipplePressable
-              onPress={() => setAddLangOpen(true)}
-              style={StyleSheet.flatten([
-                styles.langPill,
+          {/* Desktop Segmented Tabs */}
+          {isDesktop ? (
+            <View
+              style={[
+                styles.segmentedWrap,
                 { backgroundColor: colors.surface, borderColor: colors.line },
-              ])}>
-              <Text style={[styles.langName, { color: colors.text }]}>+ Язык</Text>
-            </RipplePressable>
-          </ScrollView>
+              ]}>
+              {(
+                [
+                  { key: 'vocab', label: 'Словарь', count: words.length },
+                  { key: 'sentences', label: 'Предложения', count: sentences.length },
+                ] as const
+              ).map((item) => {
+                const active = tab === item.key;
+                return (
+                  <RipplePressable
+                    key={item.key}
+                    onPress={() => setTab(item.key)}
+                    style={StyleSheet.flatten([
+                      styles.segmentBtn,
+                      active ? { backgroundColor: colors.surfaceActive } : null,
+                    ])}>
+                    <Text
+                      style={[
+                        styles.segmentLabel,
+                        { color: active ? colors.text : colors.muted },
+                      ]}>
+                      {item.label}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.segmentCount,
+                        { color: active ? colors.text : colors.muted },
+                      ]}>
+                      {item.count}
+                    </Text>
+                  </RipplePressable>
+                );
+              })}
+            </View>
+          ) : null}
+        </View>
 
-          {/* Tabs */}
-          <View style={styles.tabsRow}>
+        <View style={styles.toolbarRight}>
+          {isDesktop ? (
+            <>
+              {/* Group 1: Search & Sort */}
+              <View style={styles.toolbarGroup}>
+                <View
+                  style={[
+                    styles.searchBox,
+                    { backgroundColor: colors.surface, borderColor: colors.line },
+                  ]}>
+                  <AppIcon name="search" size="xs" color={colors.muted} />
+                  <TextInput
+                    value={search}
+                    onChangeText={setSearch}
+                    placeholder={tab === 'vocab' ? 'Поиск слов…' : 'Поиск предложений…'}
+                    placeholderTextColor={colors.muted}
+                    style={[styles.searchInput, { color: colors.text }]}
+                  />
+                  {search.length > 0 ? (
+                    <RipplePressable onPress={() => setSearch('')} style={styles.clearBtn}>
+                      <AppIcon name="close" size="xs" color={colors.muted} />
+                    </RipplePressable>
+                  ) : null}
+                </View>
+
+                {tab === 'vocab' ? (
+                  <View ref={sortMenuBtnRef} collapsable={false}>
+                    <RipplePressable
+                      accessibilityLabel="Сортировка словаря"
+                      onPress={() => {
+                        if (sortMenuOpen) {
+                          setSortMenuOpen(false);
+                          return;
+                        }
+                        measureAnchor(sortMenuBtnRef.current, (rect) => {
+                          setSortMenuAnchor(rect);
+                          setSortMenuOpen(true);
+                        });
+                      }}
+                      style={StyleSheet.flatten([
+                        styles.sortTriggerBtn,
+                        {
+                          backgroundColor:
+                            sortMode !== 'manual' || sortMenuOpen
+                              ? colors.surfaceActive
+                              : colors.surface,
+                          borderColor:
+                            sortMode !== 'manual' || sortMenuOpen ? colors.text : colors.line,
+                        },
+                      ])}>
+                      <AppIcon name="reorder" size="xs" color={colors.muted} />
+                      <Text
+                        style={[
+                          styles.sortTriggerText,
+                          { color: sortMode !== 'manual' ? colors.text : colors.muted },
+                        ]}>
+                        {VOCAB_SORT_META[sortMode].label}
+                      </Text>
+                      <AppIcon name="chevronDown" size={11} color={colors.muted} />
+                    </RipplePressable>
+                  </View>
+                ) : null}
+              </View>
+
+              <View style={[styles.toolbarDivider, { backgroundColor: colors.line }]} />
+
+              {/* Group 2: Undo / Redo */}
+              <UndoRedoButtons
+                canUndo={historyMeta.canUndo}
+                canRedo={historyMeta.canRedo}
+                colors={colors}
+                onUndo={() => {
+                  handleUndo();
+                }}
+                onRedo={() => {
+                  handleRedo();
+                }}
+              />
+
+              <View style={[styles.toolbarDivider, { backgroundColor: colors.line }]} />
+
+              {/* Group 3: Single Primary CTA */}
+              <RipplePressable
+                onPress={handlePrimaryCTA}
+                style={StyleSheet.flatten([
+                  styles.primaryCtaBtn,
+                  { backgroundColor: colors.accent },
+                ])}>
+                <AppIcon name="plus" size="xs" color={colors.accentText} />
+                <Text style={[styles.primaryCtaText, { color: colors.accentText }]}>
+                  {tab === 'vocab' ? 'Слово' : 'Предложение'}
+                </Text>
+              </RipplePressable>
+            </>
+          ) : (
+            <>
+              {historyMeta.canUndo || historyMeta.canRedo ? (
+                <UndoRedoButtons
+                  compact
+                  canUndo={historyMeta.canUndo}
+                  canRedo={historyMeta.canRedo}
+                  colors={colors}
+                  onUndo={() => {
+                    handleUndo();
+                  }}
+                  onRedo={() => {
+                    handleRedo();
+                  }}
+                />
+              ) : null}
+
+              <RipplePressable
+                accessibilityLabel="Поиск"
+                onPress={() => setMobileSearchOpen((v) => !v)}
+                style={StyleSheet.flatten([
+                  styles.iconPill,
+                  {
+                    backgroundColor:
+                      mobileSearchOpen || search.length > 0
+                        ? colors.surfaceActive
+                        : colors.surface,
+                    borderColor:
+                      mobileSearchOpen || search.length > 0 ? colors.text : colors.line,
+                  },
+                ])}>
+                <AppIcon
+                  name="search"
+                  size="sm"
+                  color={mobileSearchOpen || search.length > 0 ? colors.text : colors.muted}
+                />
+              </RipplePressable>
+
+              {tab === 'vocab' ? (
+                <View ref={sortMenuBtnRef} collapsable={false}>
+                  <RipplePressable
+                    accessibilityLabel="Сортировка"
+                    onPress={() => {
+                      measureAnchor(sortMenuBtnRef.current, (rect) => {
+                        setSortMenuAnchor(rect);
+                        setSortMenuOpen(true);
+                      });
+                    }}
+                    style={StyleSheet.flatten([
+                      styles.iconPill,
+                      {
+                        backgroundColor:
+                          sortMode !== 'manual' ? colors.surfaceActive : colors.surface,
+                        borderColor: sortMode !== 'manual' ? colors.text : colors.line,
+                      },
+                    ])}>
+                    <AppIcon
+                      name="reorder"
+                      size="sm"
+                      color={sortMode !== 'manual' ? colors.text : colors.muted}
+                    />
+                  </RipplePressable>
+                </View>
+              ) : null}
+
+              <RipplePressable
+                accessibilityLabel={tab === 'vocab' ? 'Новое слово' : 'Новое предложение'}
+                onPress={handlePrimaryCTA}
+                style={StyleSheet.flatten([
+                  styles.iconPill,
+                  { backgroundColor: colors.accent, borderColor: colors.accent },
+                ])}>
+                <AppIcon name="plus" size="sm" color={colors.accentText} />
+              </RipplePressable>
+            </>
+          )}
+        </View>
+      </View>
+
+      {/* Mobile Tabs + Collapsible Search */}
+      {!isDesktop ? (
+        <View style={styles.mobileSubBar}>
+          <View
+            style={[
+              styles.segmentedWrap,
+              styles.segmentedFull,
+              { backgroundColor: colors.surface, borderColor: colors.line },
+            ]}>
             {(
               [
-                { key: 'vocab', label: `Словарь (${words.length})` },
-                { key: 'sentences', label: `Предложения (${sentences.length})` },
+                { key: 'vocab', label: 'Словарь', count: words.length },
+                { key: 'sentences', label: 'Предложения', count: sentences.length },
               ] as const
             ).map((item) => {
               const active = tab === item.key;
@@ -501,408 +1204,648 @@ export function LanguageWorkspace() {
                   key={item.key}
                   onPress={() => setTab(item.key)}
                   style={StyleSheet.flatten([
-                    styles.tabBtn,
-                    {
-                      backgroundColor: active ? colors.surfaceActive : colors.surface,
-                      borderColor: active ? colors.text : colors.line,
-                    },
+                    styles.segmentBtn,
+                    styles.segmentBtnFull,
+                    active ? { backgroundColor: colors.surfaceActive } : null,
                   ])}>
                   <Text
                     style={[
-                      styles.tabLabel,
+                      styles.segmentLabel,
                       { color: active ? colors.text : colors.muted },
                     ]}>
                     {item.label}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.segmentCount,
+                      { color: active ? colors.text : colors.muted },
+                    ]}>
+                    {item.count}
                   </Text>
                 </RipplePressable>
               );
             })}
           </View>
-        </View>
 
-        {tab === 'vocab' ? (
-          <View style={styles.section}>
-            {/* Add Word Composer */}
+          {mobileSearchOpen ? (
             <View
               style={[
-                styles.composerCard,
+                styles.searchBox,
+                styles.searchBoxFull,
                 { backgroundColor: colors.surface, borderColor: colors.line },
               ]}>
+              <AppIcon name="search" size="xs" color={colors.muted} />
               <TextInput
-                value={wordDraft}
-                onChangeText={setWordDraft}
-                onSubmitEditing={handleAddWordWithAI}
-                placeholder={`Новое слово на языке «${activeLanguage.name}»…`}
+                autoFocus
+                value={search}
+                onChangeText={setSearch}
+                placeholder={tab === 'vocab' ? 'Поиск в словаре…' : 'Поиск предложений…'}
                 placeholderTextColor={colors.muted}
-                style={[styles.composerInput, { color: colors.text }]}
+                style={[styles.searchInput, { color: colors.text }]}
               />
-              <View style={styles.composerActions}>
-                <RipplePressable
-                  disabled={wordDraft.trim().length === 0 || aiBusy !== null}
-                  onPress={handleAddWordManual}
-                  style={StyleSheet.flatten([
-                    styles.secondaryBtn,
-                    { backgroundColor: colors.surfaceSubtle },
-                    wordDraft.trim().length === 0 ? styles.disabled : null,
-                  ])}>
-                  <Text style={[styles.secondaryBtnText, { color: colors.text }]}>Вручную</Text>
+              {search.length > 0 ? (
+                <RipplePressable onPress={() => setSearch('')} style={styles.clearBtn}>
+                  <AppIcon name="close" size="xs" color={colors.muted} />
                 </RipplePressable>
-
-                <RipplePressable
-                  disabled={wordDraft.trim().length === 0 || aiBusy !== null}
-                  onPress={handleAddWordWithAI}
-                  style={StyleSheet.flatten([
-                    styles.primaryBtn,
-                    { backgroundColor: colors.accent },
-                    wordDraft.trim().length === 0 || aiBusy !== null ? styles.disabled : null,
-                  ])}>
-                  {aiBusy === 'word' ? (
-                    <ActivityIndicator size="small" color={colors.accentText} />
-                  ) : (
-                    <View style={styles.btnIconRow}>
-                      <AppIcon name="sparkles" size="sm" color={colors.accentText} />
-                      <Text style={[styles.primaryBtnText, { color: colors.accentText }]}>
-                        Изучить с ИИ
-                      </Text>
-                    </View>
-                  )}
-                </RipplePressable>
-              </View>
+              ) : null}
             </View>
+          ) : null}
+        </View>
+      ) : null}
 
-            {/* Filter & Search Bar */}
-            <View style={styles.filterBar}>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.filterPills}>
-                {(
-                  [
-                    { key: 'all', label: `Все (${statusCounts.all})` },
-                    { key: 'new', label: `Новые (${statusCounts.new})` },
-                    { key: 'learning', label: `Учу (${statusCounts.learning})` },
-                    { key: 'known', label: `Знаю (${statusCounts.known})` },
-                  ] as const
-                ).map((item) => {
-                  const active = statusFilter === item.key;
-                  return (
+      {/* Main Content */}
+      <ScrollView
+        ref={scrollRef}
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled">
+        <View style={styles.inner}>
+          {tab === 'vocab' ? (
+            <View style={styles.section}>
+              {/* Status Filter Pills (Web drop targets for 1-drag status change) + Progress */}
+              <View style={styles.statusHeaderRow}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.filterPills}>
+                  <RipplePressable
+                    onPress={() => setStatusFilter('all')}
+                    style={StyleSheet.flatten([
+                      styles.filterChip,
+                      {
+                        backgroundColor:
+                          statusFilter === 'all' ? colors.surfaceActive : colors.surface,
+                        borderColor: statusFilter === 'all' ? colors.text : colors.line,
+                      },
+                    ])}>
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        { color: statusFilter === 'all' ? colors.text : colors.muted },
+                      ]}>
+                      Все ({statusCounts.all})
+                    </Text>
+                  </RipplePressable>
+
+                  {VOCAB_STATUS_ORDER.map((statusKey) => {
+                    const active = statusFilter === statusKey;
+                    const dropOver = statusDropHover === statusKey;
+                    const meta = VOCAB_STATUS_META[statusKey];
+                    const count = statusCounts[statusKey];
+
+                    return (
+                      <WebDragBox
+                        key={statusKey}
+                        onDragOver={(event) => {
+                          if (!draggingWordId) {
+                            return;
+                          }
+                          event.preventDefault();
+                          event.stopPropagation();
+                          if (event.dataTransfer) {
+                            event.dataTransfer.dropEffect = 'move';
+                          }
+                          if (statusDropHover !== statusKey) {
+                            setStatusDropHover(statusKey);
+                          }
+                        }}
+                        onDragLeave={() => {
+                          setStatusDropHover((prev) => (prev === statusKey ? null : prev));
+                        }}
+                        onDrop={(event) => handleDropWordOnStatus(event, statusKey)}>
+                        <RipplePressable
+                          onPress={() => setStatusFilter(statusKey)}
+                          style={StyleSheet.flatten([
+                            styles.filterChip,
+                            {
+                              backgroundColor: dropOver
+                                ? colors.accent
+                                : active
+                                  ? colors.surfaceActive
+                                  : colors.surface,
+                              borderColor: dropOver
+                                ? colors.accent
+                                : active
+                                  ? colors.text
+                                  : colors.line,
+                            },
+                          ])}>
+                          <View
+                            style={[
+                              styles.filterDot,
+                              {
+                                backgroundColor: dropOver
+                                  ? colors.accentText
+                                  : meta.dotColor,
+                              },
+                            ]}
+                          />
+                          <Text
+                            style={[
+                              styles.filterChipText,
+                              {
+                                color: dropOver
+                                  ? colors.accentText
+                                  : active
+                                    ? colors.text
+                                    : colors.muted,
+                              },
+                            ]}>
+                            {meta.pluralLabel} ({count})
+                          </Text>
+                        </RipplePressable>
+                      </WebDragBox>
+                    );
+                  })}
+                </ScrollView>
+
+                {words.length > 0 ? (
+                  <View style={styles.progressWrap}>
+                    <Text style={[styles.progressText, { color: colors.muted }]}>
+                      Выучено {statusCounts.known}/{words.length}
+                    </Text>
+                    <View style={[styles.progressTrack, { backgroundColor: colors.surfaceSubtle }]}>
+                      <View
+                        style={[
+                          styles.progressFill,
+                          { width: `${masteryPct}%`, backgroundColor: colors.success },
+                        ]}
+                      />
+                    </View>
+                  </View>
+                ) : null}
+              </View>
+
+              {/* Active / Filtered Words Grid */}
+              {activeWords.length === 0 ? (
+                <View
+                  style={[
+                    styles.emptyCard,
+                    { backgroundColor: colors.surface, borderColor: colors.line },
+                  ]}>
+                  <Text style={[styles.emptyText, { color: colors.muted }]}>
+                    {search.trim().length > 0
+                      ? 'В словаре нет совпадений'
+                      : shouldSplitKnown && knownWords.length > 0
+                        ? 'Все слова изучены — добавьте новое ниже'
+                        : 'Словарь пока пуст — добавьте слово ниже или через «+ Слово»'}
+                  </Text>
+                </View>
+              ) : (
+                <View style={[styles.wordGrid, isDesktop ? styles.wordGridDesktop : null]}>
+                  {activeWords.map((word, index) => (
+                    <WordCardItem
+                      key={word.id}
+                      word={word}
+                      colors={colors}
+                      isDesktop={isDesktop}
+                      canDrag={Platform.OS === 'web'}
+                      canMoveUp={index > 0}
+                      canMoveDown={index < activeWords.length - 1}
+                      isDragging={draggingWordId === word.id}
+                      dropIndicator={
+                        wordDropTarget?.id === word.id ? wordDropTarget.position : null
+                      }
+                      onOpen={(id) => setSelectedWordId(id)}
+                      onChangeStatus={handleChangeWordStatus}
+                      onGenerateExamples={handleGenerateExamples}
+                      onMoveByOffset={(id, delta) =>
+                        handleMoveWordByOffset(id, delta, activeWords)
+                      }
+                      onDelete={handleDeleteWord}
+                      onDragStart={(id) => setDraggingWordId(id)}
+                      onDragEnd={() => {
+                        setDraggingWordId(null);
+                        setWordDropTarget(null);
+                        setStatusDropHover(null);
+                        setKnownSectionHover(false);
+                      }}
+                      onDragOver={(targetId, pos) => {
+                        setWordDropTarget((prev) =>
+                          prev?.id === targetId && prev.position === pos
+                            ? prev
+                            : { id: targetId, position: pos },
+                        );
+                      }}
+                      onDragLeave={(targetId) => {
+                        setWordDropTarget((prev) => (prev?.id === targetId ? null : prev));
+                      }}
+                      onDropWord={handleDropWordOnWord}
+                    />
+                  ))}
+                </View>
+              )}
+
+              {/* Minimalist Bottom Quick-Add Bar */}
+              {search.trim().length === 0 ? (
+                <View
+                  style={[
+                    styles.quickAddBar,
+                    { backgroundColor: colors.surface, borderColor: colors.line },
+                  ]}>
+                  <TextInput
+                    value={quickWordDraft}
+                    onChangeText={setQuickWordDraft}
+                    onSubmitEditing={() => handleQuickAddWord(false)}
+                    placeholder="Новое слово…"
+                    placeholderTextColor={colors.muted}
+                    style={[styles.quickAddInput, { color: colors.text }]}
+                  />
+                  <RipplePressable
+                    accessibilityLabel="Добавить и разобрать с ИИ"
+                    disabled={quickWordDraft.trim().length === 0 || aiBusy !== null}
+                    onPress={() => handleQuickAddWord(true)}
+                    style={StyleSheet.flatten([
+                      styles.quickAddIconBtn,
+                      { backgroundColor: colors.surfaceSubtle },
+                      quickWordDraft.trim().length === 0 || aiBusy !== null
+                        ? styles.disabled
+                        : null,
+                    ])}>
+                    {aiBusy === 'word' ? (
+                      <ActivityIndicator size="small" color={colors.text} />
+                    ) : (
+                      <AppIcon name="sparkles" size="sm" color={colors.text} />
+                    )}
+                  </RipplePressable>
+
+                  <RipplePressable
+                    accessibilityLabel="Быстро добавить слово"
+                    disabled={quickWordDraft.trim().length === 0 || aiBusy !== null}
+                    onPress={() => handleQuickAddWord(false)}
+                    style={StyleSheet.flatten([
+                      styles.quickAddSubmitBtn,
+                      { backgroundColor: colors.accent },
+                      quickWordDraft.trim().length === 0 || aiBusy !== null
+                        ? styles.disabled
+                        : null,
+                    ])}>
+                    <AppIcon name="plus" size="sm" color={colors.accentText} />
+                  </RipplePressable>
+                </View>
+              ) : null}
+
+              {/* Collapsible Known Section when viewing 'all' */}
+              {shouldSplitKnown && (knownWords.length > 0 || draggingWordId !== null) ? (
+                <View style={styles.knownSection}>
+                  <WebDragBox
+                    onDragOver={(event) => {
+                      if (!draggingWordId) {
+                        return;
+                      }
+                      event.preventDefault();
+                      event.stopPropagation();
+                      if (event.dataTransfer) {
+                        event.dataTransfer.dropEffect = 'move';
+                      }
+                      if (!knownSectionHover) {
+                        setKnownSectionHover(true);
+                      }
+                    }}
+                    onDragLeave={() => setKnownSectionHover(false)}
+                    onDrop={(event) => handleDropWordOnStatus(event, 'known')}>
                     <RipplePressable
-                      key={item.key}
-                      onPress={() => setStatusFilter(item.key)}
+                      onPress={() => setKnownExpanded((v) => !v)}
                       style={StyleSheet.flatten([
-                        styles.filterChip,
+                        styles.knownHeader,
                         {
-                          backgroundColor: active ? colors.surfaceActive : colors.surface,
-                          borderColor: active ? colors.line : colors.line,
+                          backgroundColor: knownSectionHover
+                            ? colors.successBg
+                            : 'transparent',
+                          borderColor: knownSectionHover ? colors.success : colors.line,
                         },
                       ])}>
-                      <Text
-                        style={[
-                          styles.filterChipText,
-                          { color: active ? colors.text : colors.muted },
-                        ]}>
-                        {item.label}
-                      </Text>
+                      <View style={styles.knownHeaderLeft}>
+                        <AppIcon
+                          name={knownExpanded ? 'chevronDown' : 'chevronRight'}
+                          size="xs"
+                          color={knownSectionHover ? colors.success : colors.muted}
+                        />
+                        <View
+                          style={[
+                            styles.filterDot,
+                            { backgroundColor: VOCAB_STATUS_META.known.dotColor },
+                          ]}
+                        />
+                        <Text
+                          style={[
+                            styles.knownHeaderText,
+                            { color: knownSectionHover ? colors.success : colors.muted },
+                          ]}>
+                          {knownSectionHover
+                            ? 'Отпустите, чтобы отметить как выученное'
+                            : `Выучено (${knownWords.length})`}
+                        </Text>
+                      </View>
                     </RipplePressable>
-                  );
-                })}
-              </ScrollView>
+                  </WebDragBox>
 
+                  {knownExpanded && knownWords.length > 0 ? (
+                    <View
+                      style={[
+                        styles.wordGrid,
+                        isDesktop ? styles.wordGridDesktop : null,
+                        styles.knownGridOpacity,
+                      ]}>
+                      {knownWords.map((word, index) => (
+                        <WordCardItem
+                          key={word.id}
+                          word={word}
+                          colors={colors}
+                          isDesktop={isDesktop}
+                          canDrag={Platform.OS === 'web'}
+                          canMoveUp={index > 0}
+                          canMoveDown={index < knownWords.length - 1}
+                          isDragging={draggingWordId === word.id}
+                          dropIndicator={
+                            wordDropTarget?.id === word.id ? wordDropTarget.position : null
+                          }
+                          onOpen={(id) => setSelectedWordId(id)}
+                          onChangeStatus={handleChangeWordStatus}
+                          onGenerateExamples={handleGenerateExamples}
+                          onMoveByOffset={(id, delta) =>
+                            handleMoveWordByOffset(id, delta, knownWords)
+                          }
+                          onDelete={handleDeleteWord}
+                          onDragStart={(id) => setDraggingWordId(id)}
+                          onDragEnd={() => {
+                            setDraggingWordId(null);
+                            setWordDropTarget(null);
+                            setStatusDropHover(null);
+                            setKnownSectionHover(false);
+                          }}
+                          onDragOver={(targetId, pos) => {
+                            setWordDropTarget((prev) =>
+                              prev?.id === targetId && prev.position === pos
+                                ? prev
+                                : { id: targetId, position: pos },
+                            );
+                          }}
+                          onDragLeave={(targetId) => {
+                            setWordDropTarget((prev) => (prev?.id === targetId ? null : prev));
+                          }}
+                          onDropWord={handleDropWordOnWord}
+                        />
+                      ))}
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+            </View>
+          ) : (
+            <View style={styles.section}>
+              {/* Compact Sentence Composer */}
               <View
                 style={[
-                  styles.searchBox,
-                  !isDesktop ? styles.searchBoxFull : null,
+                  styles.sentenceComposer,
                   { backgroundColor: colors.surface, borderColor: colors.line },
                 ]}>
                 <TextInput
-                  value={search}
-                  onChangeText={setSearch}
-                  placeholder="Поиск в словаре…"
+                  ref={sentenceInputRef}
+                  value={sentenceDraft}
+                  onChangeText={setSentenceDraft}
+                  multiline
+                  placeholder={`Предложение на языке «${activeLanguage.name}» для разбора…`}
                   placeholderTextColor={colors.muted}
-                  style={[styles.searchInput, { color: colors.text }]}
+                  textAlignVertical="top"
+                  onKeyPress={(event) => {
+                    if (Platform.OS === 'web') {
+                      const nativeEvent = event.nativeEvent as unknown as {
+                        key?: string;
+                        metaKey?: boolean;
+                        ctrlKey?: boolean;
+                      };
+                      if (
+                        nativeEvent.key === 'Enter' &&
+                        (nativeEvent.metaKey || nativeEvent.ctrlKey)
+                      ) {
+                        handleAnalyzeSentence();
+                      }
+                    }
+                  }}
+                  style={[styles.sentenceInput, { color: colors.text }]}
                 />
-                {search.length > 0 ? (
-                  <RipplePressable onPress={() => setSearch('')} style={styles.clearBtn}>
-                    <AppIcon name="close" size="xs" color={colors.muted} />
-                  </RipplePressable>
-                ) : null}
-              </View>
-            </View>
+                <View style={styles.sentenceComposerFooter}>
+                  <View style={styles.aiHintRow}>
+                    <View
+                      style={[
+                        styles.aiDot,
+                        { backgroundColor: aiProvider.isMock ? colors.warning : colors.success },
+                      ]}
+                    />
+                    <Text style={[styles.aiHintText, { color: colors.muted }]}>
+                      {aiProvider.label}
+                    </Text>
+                  </View>
 
-            {/* Words Grid */}
-            {filteredWords.length === 0 ? (
-              <View
-                style={[
-                  styles.emptyCard,
-                  { backgroundColor: colors.surface, borderColor: colors.line },
-                ]}>
-                <Text style={[styles.emptyText, { color: colors.muted }]}>
-                  {search.trim().length > 0
-                    ? 'В словаре нет совпадений'
-                    : 'Словарь пока пуст — добавьте слово выше'}
-                </Text>
-              </View>
-            ) : (
-              <View style={[styles.wordGrid, isDesktop ? styles.wordGridDesktop : null]}>
-                {filteredWords.map((word) => {
-                  const st = statusStyle(word.status);
-                  return (
-                    <Animated.View
-                      key={word.id}
-                      entering={FadeInDown.duration(150)}
-                      layout={LinearTransition.springify().damping(24).stiffness(260)}
-                      style={isDesktop ? styles.wordCardWrapDesktop : styles.wordCardWrapMobile}>
-                      <RipplePressable
-                        onPress={() => setSelectedWordId(word.id)}
-                        style={StyleSheet.flatten([
-                          styles.wordCard,
-                          { backgroundColor: colors.surface, borderColor: colors.line },
-                        ])}>
-                        <View style={styles.wordTopRow}>
-                          <View style={styles.wordTitleCol}>
-                            <Text style={[styles.wordTerm, { color: colors.text }]}>
-                              {word.term}
-                            </Text>
-                            {word.reading || word.partOfSpeech ? (
-                              <Text style={[styles.wordReading, { color: colors.muted }]}>
-                                {[word.reading, word.partOfSpeech].filter(Boolean).join(' · ')}
-                              </Text>
-                            ) : null}
-                          </View>
-
-                          <RipplePressable
-                            accessibilityLabel="Сменить статус знания"
-                            onPress={(event) => {
-                              event.stopPropagation?.();
-                              handleCycleWordStatus(word);
-                            }}
-                            style={StyleSheet.flatten([
-                              styles.statusBadge,
-                              { backgroundColor: st.bg },
-                            ])}>
-                            <Text style={[styles.statusBadgeText, { color: st.fg }]}>
-                              {VOCAB_STATUS_META[word.status].label}
-                            </Text>
-                          </RipplePressable>
-                        </View>
-
-                        <Text
-                          style={[styles.wordTranslation, { color: colors.text }]}
-                          numberOfLines={2}>
-                          {word.translation || 'Без перевода — нажмите, чтобы заполнить'}
+                  <RipplePressable
+                    disabled={sentenceDraft.trim().length === 0 || aiBusy !== null}
+                    onPress={handleAnalyzeSentence}
+                    style={StyleSheet.flatten([
+                      styles.analyzeBtn,
+                      { backgroundColor: colors.accent },
+                      sentenceDraft.trim().length === 0 || aiBusy !== null
+                        ? styles.disabled
+                        : null,
+                    ])}>
+                    {aiBusy === 'sentence' ? (
+                      <ActivityIndicator size="small" color={colors.accentText} />
+                    ) : (
+                      <>
+                        <AppIcon name="sparkles" size="xs" color={colors.accentText} />
+                        <Text style={[styles.analyzeBtnText, { color: colors.accentText }]}>
+                          Разобрать
                         </Text>
-
-                        <View style={styles.wordFooter}>
-                          <Text style={[styles.wordMeta, { color: colors.muted }]}>
-                            Примеров: {word.examples.length}
-                          </Text>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                            <Text style={[styles.wordMeta, { color: colors.muted }]}>Открыть</Text>
-                            <AppIcon name="arrowRight" size="xs" color={colors.muted} />
-                          </View>
-                        </View>
-                      </RipplePressable>
-                    </Animated.View>
-                  );
-                })}
+                      </>
+                    )}
+                  </RipplePressable>
+                </View>
               </View>
-            )}
-          </View>
-        ) : (
-          <View style={styles.section}>
-            {/* Sentence Composer */}
-            <View
-              style={[
-                styles.composerCard,
-                { backgroundColor: colors.surface, borderColor: colors.line },
-              ]}>
-              <TextInput
-                value={sentenceDraft}
-                onChangeText={setSentenceDraft}
-                multiline
-                placeholder={`Вставьте предложение на языке «${activeLanguage.name}» для разбора на слова и правила…`}
-                placeholderTextColor={colors.muted}
-                textAlignVertical="top"
-                style={[styles.sentenceInput, { color: colors.text }]}
-              />
-              <View style={styles.composerActions}>
+
+              {/* Sentences List */}
+              {filteredSentences.length === 0 ? (
+                <View
+                  style={[
+                    styles.emptyCard,
+                    { backgroundColor: colors.surface, borderColor: colors.line },
+                  ]}>
+                  <Text style={[styles.emptyText, { color: colors.muted }]}>
+                    {search.trim().length > 0
+                      ? 'Подходящих предложений не найдено'
+                      : 'Разобранных предложений пока нет — вставьте первое выше'}
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.sentencesList}>
+                  {filteredSentences.map((item, index) => (
+                    <SentenceCardItem
+                      key={item.id}
+                      sentence={item}
+                      colors={colors}
+                      vocabByNormalizedTerm={vocabByNormalizedTerm}
+                      canDrag={Platform.OS === 'web' && search.trim().length === 0}
+                      canMoveUp={search.trim().length === 0 && index > 0}
+                      canMoveDown={
+                        search.trim().length === 0 && index < filteredSentences.length - 1
+                      }
+                      isDragging={draggingSentenceId === item.id}
+                      dropIndicator={
+                        sentenceDropTarget?.id === item.id ? sentenceDropTarget.position : null
+                      }
+                      onAddTokenToVocab={handleAddTokenToVocab}
+                      onAddAllTokensToVocab={handleAddAllTokensToVocab}
+                      onMoveByOffset={handleMoveSentenceByOffset}
+                      onDelete={handleDeleteSentence}
+                      onCopyText={handleCopyText}
+                      onDragStart={(id) => setDraggingSentenceId(id)}
+                      onDragEnd={() => {
+                        setDraggingSentenceId(null);
+                        setSentenceDropTarget(null);
+                      }}
+                      onDragOver={(targetId, pos) => {
+                        setSentenceDropTarget((prev) =>
+                          prev?.id === targetId && prev.position === pos
+                            ? prev
+                            : { id: targetId, position: pos },
+                        );
+                      }}
+                      onDragLeave={(targetId) => {
+                        setSentenceDropTarget((prev) => (prev?.id === targetId ? null : prev));
+                      }}
+                      onDropSentence={handleDropSentence}
+                    />
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
+        </View>
+      </ScrollView>
+
+      {/* Language Switcher Popover */}
+      <AnchoredPopover
+        visible={langMenuOpen}
+        anchor={langMenuAnchor}
+        width={260}
+        estimatedHeight={320}
+        align="left"
+        colors={colors}
+        onClose={() => setLangMenuOpen(false)}>
+        <View style={styles.popoverBody}>
+          {languages.map((lang) => {
+            const active = lang.id === activeLangId;
+            const stat = langStats[lang.id];
+            const wordCount = stat?.wordCount ?? 0;
+
+            return (
+              <View
+                key={lang.id}
+                style={[
+                  styles.langPopoverRow,
+                  active ? { backgroundColor: colors.surfaceActive } : null,
+                ]}>
                 <RipplePressable
-                  disabled={sentenceDraft.trim().length === 0 || aiBusy !== null}
-                  onPress={handleAnalyzeSentence}
-                  style={StyleSheet.flatten([
-                    styles.primaryBtn,
-                    { backgroundColor: colors.accent },
-                    sentenceDraft.trim().length === 0 || aiBusy !== null ? styles.disabled : null,
-                  ])}>
-                  {aiBusy === 'sentence' ? (
-                    <ActivityIndicator size="small" color={colors.accentText} />
-                  ) : (
-                    <View style={styles.btnIconRow}>
-                      <AppIcon name="sparkles" size="sm" color={colors.accentText} />
-                      <Text style={[styles.primaryBtnText, { color: colors.accentText }]}>
-                        Разобрать с ИИ
-                      </Text>
-                    </View>
-                  )}
+                  onPress={() => {
+                    setLangMenuOpen(false);
+                    selectLanguage(lang.id);
+                  }}
+                  style={styles.langPopoverSelect}>
+                  <Text style={[styles.langCodeBadge, { color: colors.muted }]}>
+                    {lang.code.toUpperCase()}
+                  </Text>
+                  <Text
+                    style={[styles.langPopoverName, { color: colors.text }]}
+                    numberOfLines={1}>
+                    {lang.name}
+                  </Text>
+                  <Text style={[styles.langPopoverCount, { color: colors.muted }]}>
+                    {wordCount}
+                  </Text>
+                  {active ? <AppIcon name="check" size="xs" color={colors.text} /> : null}
+                </RipplePressable>
+
+                <RipplePressable
+                  accessibilityLabel={`Настроить язык ${lang.name}`}
+                  onPress={() => {
+                    setLangMenuOpen(false);
+                    setLangDialog({ open: true, mode: 'edit', language: lang });
+                  }}
+                  style={styles.langEditBtn}>
+                  <AppIcon name="edit" size="xs" color={colors.muted} />
                 </RipplePressable>
               </View>
-            </View>
+            );
+          })}
 
-            {/* Sentences List */}
-            {sentences.length === 0 ? (
-              <View
-                style={[
-                  styles.emptyCard,
-                  { backgroundColor: colors.surface, borderColor: colors.line },
-                ]}>
-                <Text style={[styles.emptyText, { color: colors.muted }]}>
-                  Разобранных предложений пока нет — добавьте первое выше.
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.sentencesList}>
-                {sentences.map((item) => {
-                  const confirming = confirmDeleteSentenceId === item.id;
-                  return (
-                    <Animated.View
-                      key={item.id}
-                      entering={FadeInDown.duration(160)}
-                      layout={LinearTransition.springify().damping(24).stiffness(260)}
-                      style={[
-                        styles.sentenceCard,
-                        { backgroundColor: colors.surface, borderColor: colors.line },
-                      ]}>
-                      <View style={styles.sentenceHeader}>
-                        <View style={styles.sentenceTexts}>
-                          <Text style={[styles.sentenceOriginal, { color: colors.text }]}>
-                            {item.originalText}
-                          </Text>
-                          {item.translation ? (
-                            <Text style={[styles.sentenceTrans, { color: colors.muted }]}>
-                              {item.translation}
-                            </Text>
-                          ) : null}
-                        </View>
+          <View style={[styles.popoverDivider, { backgroundColor: colors.line }]} />
 
-                        <RipplePressable
-                          onPress={() => handleDeleteSentence(item.id)}
-                          style={StyleSheet.flatten([
-                            styles.sentenceDelBtn,
-                            {
-                              backgroundColor: confirming
-                                ? colors.danger
-                                : colors.surfaceSubtle,
-                            },
-                          ])}>
-                          {confirming ? (
-                            <Text style={[styles.sentenceDelText, { color: '#FFFFFF' }]}>
-                              Удалить?
-                            </Text>
-                          ) : (
-                            <AppIcon name="close" size="sm" color={colors.muted} />
-                          )}
-                        </RipplePressable>
-                      </View>
+          <RipplePressable
+            onPress={() => {
+              setLangMenuOpen(false);
+              setLangDialog({ open: true, mode: 'create', language: null });
+            }}
+            style={styles.popoverActionRow}>
+            <AppIcon name="plus" size="xs" color={colors.text} />
+            <Text style={[styles.popoverActionText, { color: colors.text }]}>Добавить язык</Text>
+          </RipplePressable>
 
-                      {/* Word-by-word tokens */}
-                      {item.tokens.length > 0 ? (
-                        <View style={styles.subBlock}>
-                          <Text style={[styles.subBlockLabel, { color: colors.muted }]}>
-                            Разбор по словам (тап — добавить в словарь или открыть)
-                          </Text>
-                          <View style={styles.tokensWrap}>
-                            {item.tokens.map((token, idx) => {
-                              const savedWord =
-                                vocabByNormalizedTerm.get(token.lemma.toLowerCase()) ??
-                                vocabByNormalizedTerm.get(token.surface.toLowerCase());
-                              const st = savedWord ? statusStyle(savedWord.status) : null;
+          <View style={[styles.popoverDivider, { backgroundColor: colors.line }]} />
 
-                              return (
-                                <RipplePressable
-                                  key={`${item.id}-tok-${idx}`}
-                                  onPress={() => handleAddTokenToVocab(item.id, token)}
-                                  style={StyleSheet.flatten([
-                                    styles.tokenCard,
-                                    {
-                                      backgroundColor: colors.surfaceSubtle,
-                                      borderColor: savedWord ? colors.success : colors.line,
-                                    },
-                                  ])}>
-                                  <View style={styles.tokenTop}>
-                                    <Text style={[styles.tokenSurface, { color: colors.text }]}>
-                                      {token.surface}
-                                    </Text>
-                                    {savedWord && st ? (
-                                      <View
-                                        style={[styles.tokenBadge, { backgroundColor: st.bg }]}>
-                                        <Text style={[styles.tokenBadgeText, { color: st.fg }]}>
-                                          {VOCAB_STATUS_META[savedWord.status].label}
-                                        </Text>
-                                      </View>
-                                    ) : (
-                                      <Text style={[styles.tokenPlus, { color: colors.muted }]}>
-                                        + словарь
-                                      </Text>
-                                    )}
-                                  </View>
-                                  <Text style={[styles.tokenMeta, { color: colors.muted }]}>
-                                    {token.translation}
-                                  </Text>
-                                  {token.role ? (
-                                    <Text style={[styles.tokenRole, { color: colors.muted }]}>
-                                      {token.partOfSpeech} · {token.role}
-                                    </Text>
-                                  ) : null}
-                                </RipplePressable>
-                              );
-                            })}
-                          </View>
-                        </View>
-                      ) : null}
-
-                      {/* Grammar rules */}
-                      {item.rules.length > 0 ? (
-                        <View style={styles.subBlock}>
-                          <Text style={[styles.subBlockLabel, { color: colors.muted }]}>
-                            Правила и грамматика
-                          </Text>
-                          <View style={styles.rulesList}>
-                            {item.rules.map((rule, idx) => (
-                              <View
-                                key={`${item.id}-rule-${idx}`}
-                                style={[
-                                  styles.ruleBox,
-                                  { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
-                                ]}>
-                                <Text style={[styles.ruleTitle, { color: colors.text }]}>
-                                  {rule.title}
-                                </Text>
-                                <Text style={[styles.ruleDesc, { color: colors.muted }]}>
-                                  {rule.explanation}
-                                </Text>
-                              </View>
-                            ))}
-                          </View>
-                        </View>
-                      ) : null}
-
-                      {/* Summary */}
-                      {item.grammarSummary ? (
-                        <View
-                          style={[styles.summaryBox, { backgroundColor: colors.surfaceSubtle }]}>
-                          <Text style={[styles.summaryText, { color: colors.muted }]}>
-                            {item.grammarSummary}
-                          </Text>
-                        </View>
-                      ) : null}
-                    </Animated.View>
-                  );
-                })}
-              </View>
-            )}
+          <View style={styles.popoverAiRow}>
+            <View
+              style={[
+                styles.aiDot,
+                { backgroundColor: aiProvider.isMock ? colors.warning : colors.success },
+              ]}
+            />
+            <Text style={[styles.popoverAiText, { color: colors.muted }]}>{aiProvider.label}</Text>
           </View>
-        )}
-      </View>
+        </View>
+      </AnchoredPopover>
+
+      {/* Sort Mode Popover */}
+      <AnchoredPopover
+        visible={sortMenuOpen}
+        anchor={sortMenuAnchor}
+        width={186}
+        estimatedHeight={145}
+        align="right"
+        colors={colors}
+        onClose={() => setSortMenuOpen(false)}>
+        <View style={styles.popoverBody}>
+          {SORT_MODES.map((mode) => {
+            const active = sortMode === mode;
+            return (
+              <RipplePressable
+                key={mode}
+                onPress={() => {
+                  setSortMode(mode);
+                  setSortMenuOpen(false);
+                }}
+                style={StyleSheet.flatten([
+                  styles.popoverActionRow,
+                  active ? { backgroundColor: colors.surfaceActive } : null,
+                ])}>
+                <Text style={[styles.popoverActionText, { color: colors.text }]}>
+                  {VOCAB_SORT_META[mode].label}
+                </Text>
+                {active ? <AppIcon name="check" size="xs" color={colors.text} /> : null}
+              </RipplePressable>
+            );
+          })}
+        </View>
+      </AnchoredPopover>
+
+      {/* Modals */}
+      <CreateWordModal
+        visible={createWordOpen}
+        language={activeLanguage}
+        existingWordsByTerm={vocabByNormalizedTerm}
+        onClose={() => setCreateWordOpen(false)}
+        onOpenExisting={(id) => setSelectedWordId(id)}
+        onAnalyzeWithAI={handleAnalyzeWordDraft}
+        onCreate={handleCreateWordFromModal}
+      />
 
       <WordDetailModal
         word={selectedWord}
@@ -912,16 +1855,33 @@ export function LanguageWorkspace() {
         onDelete={handleDeleteWord}
         onGenerateExamples={handleGenerateExamples}
         onAddManualExample={handleAddManualExample}
+        onReorderExamples={handleReorderExamples}
         onDeleteExample={handleDeleteExample}
       />
 
       <AddLanguageDialog
-        visible={addLangOpen}
+        visible={langDialog.open}
+        mode={langDialog.mode}
+        language={langDialog.language}
+        canDelete={languages.length > 1}
         existingCodes={existingLangCodes}
-        onClose={() => setAddLangOpen(false)}
+        onClose={() => setLangDialog({ open: false, mode: 'create', language: null })}
         onCreate={handleCreateLanguage}
+        onUpdate={handleUpdateLanguage}
+        onDelete={handleDeleteLanguage}
       />
-    </ScrollView>
+
+      {/* Floating Drag-to-Delete Trash Zone */}
+      <DragTrashZone
+        visible={isDraggingAnything}
+        label={trashLabel}
+        colors={colors}
+        onDropDelete={handleDropToTrash}
+      />
+
+      {/* Undo / Redo & Status Toast */}
+      <HistoryToast message={toastMessage} colors={colors} />
+    </View>
   );
 }
 
@@ -931,186 +1891,107 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  scroll: {
+  screen: {
     flex: 1,
   },
-  container: {
-    flexGrow: 1,
-    alignItems: 'center',
+  screenDesktop: {
+    paddingHorizontal: 24,
+    paddingTop: 14,
   },
-  containerDesktop: {
-    paddingHorizontal: 28,
-    paddingVertical: 24,
+  screenMobile: {
+    paddingHorizontal: 12,
+    paddingTop: 10,
   },
-  containerMobile: {
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-  },
-  inner: {
-    width: '100%',
-    maxWidth: 960,
-    gap: 18,
-  },
-  header: {
-    gap: 12,
-  },
-  titleRow: {
+  toolbar: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    flexWrap: 'wrap',
     gap: 10,
+    minHeight: 40,
+    marginBottom: 12,
   },
-  titleGroup: {
-    gap: 4,
-    flex: 1,
-    minWidth: 220,
+  toolbarLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexShrink: 1,
+    minWidth: 0,
   },
-  title: {
-    fontSize: 26,
-    fontWeight: '700',
-    letterSpacing: -0.5,
-  },
-  subtitle: {
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  aiChip: {
+  langSwitcherBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
+    height: 34,
+    paddingHorizontal: 11,
+    borderRadius: 9,
     borderWidth: StyleSheet.hairlineWidth,
+    maxWidth: 220,
   },
-  aiDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-  },
-  aiChipText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  langRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  langPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  langCode: {
+  langCodeTag: {
     fontSize: 10,
     fontWeight: '700',
   },
-  langName: {
+  langSwitcherName: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
+    flexShrink: 1,
   },
-  tabsRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  tabBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  tabLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  section: {
-    gap: 14,
-  },
-  composerCard: {
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: 14,
-    gap: 10,
-  },
-  composerInput: {
-    fontSize: 15,
-    paddingVertical: 6,
-    paddingHorizontal: 4,
-  },
-  sentenceInput: {
-    fontSize: 15,
-    lineHeight: 22,
-    minHeight: 68,
-    paddingVertical: 4,
-    paddingHorizontal: 4,
-  },
-  composerActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    gap: 8,
-  },
-  primaryBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 10,
-    minWidth: 130,
-    alignItems: 'center',
-  },
-  btnIconRow: {
+  segmentedWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-  },
-  primaryBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  secondaryBtn: {
-    paddingHorizontal: 13,
-    paddingVertical: 9,
-    borderRadius: 10,
-  },
-  secondaryBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  disabled: {
-    opacity: 0.35,
-  },
-  filterBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  filterPills: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  filterChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    padding: 3,
     borderRadius: 9,
     borderWidth: StyleSheet.hairlineWidth,
+    gap: 2,
+    height: 34,
   },
-  filterChipText: {
+  segmentedFull: {
+    width: '100%',
+  },
+  segmentBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    height: 26,
+    paddingHorizontal: 10,
+    borderRadius: 7,
+  },
+  segmentBtnFull: {
+    flex: 1,
+  },
+  segmentLabel: {
     fontSize: 12,
     fontWeight: '600',
+  },
+  segmentCount: {
+    fontSize: 11,
+    fontWeight: '600',
+    opacity: 0.75,
+  },
+  toolbarRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexShrink: 0,
+  },
+  toolbarGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  toolbarDivider: {
+    width: 1,
+    height: 20,
+    opacity: 0.7,
   },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    width: 210,
+    gap: 6,
+    width: 184,
     height: 34,
-    borderRadius: 10,
+    borderRadius: 9,
     borderWidth: StyleSheet.hairlineWidth,
     paddingLeft: 10,
     paddingRight: 4,
@@ -1122,6 +2003,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     paddingVertical: 4,
+    minWidth: 0,
   },
   clearBtn: {
     width: 22,
@@ -1130,11 +2012,109 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  clearGlyph: {
-    fontSize: 15,
+  sortTriggerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 34,
+    paddingHorizontal: 10,
+    borderRadius: 9,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  sortTriggerText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  primaryCtaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 13,
+    height: 34,
+    borderRadius: 9,
+  },
+  primaryCtaText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  iconPill: {
+    width: 34,
+    height: 34,
+    borderRadius: 9,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mobileSubBar: {
+    gap: 8,
+    marginBottom: 12,
+  },
+  scroll: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    alignItems: 'center',
+    paddingBottom: 64,
+  },
+  inner: {
+    width: '100%',
+    maxWidth: 960,
+  },
+  section: {
+    gap: 14,
+  },
+  statusHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  filterPills: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 9,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  filterDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  filterChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  progressWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  progressText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  progressTrack: {
+    width: 72,
+    height: 5,
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 3,
   },
   emptyCard: {
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
     padding: 24,
     alignItems: 'center',
@@ -1150,175 +2130,182 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
   },
-  wordCardWrapDesktop: {
-    width: '49%',
-    minWidth: 280,
-  },
-  wordCardWrapMobile: {
-    width: '100%',
-  },
-  wordCard: {
-    borderRadius: 15,
+  quickAddBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 13,
     borderWidth: StyleSheet.hairlineWidth,
-    padding: 14,
-    gap: 8,
+    paddingLeft: 14,
+    paddingRight: 6,
+    paddingVertical: 6,
   },
-  wordTopRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  wordTitleCol: {
+  quickAddInput: {
     flex: 1,
-    minWidth: 0,
-    gap: 2,
-  },
-  wordTerm: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  wordReading: {
-    fontSize: 12,
-  },
-  statusBadge: {
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  statusBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  wordTranslation: {
     fontSize: 14,
-    lineHeight: 20,
-  },
-  wordFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 2,
-  },
-  wordMeta: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  sentencesList: {
-    gap: 14,
-  },
-  sentenceCard: {
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: 16,
-    gap: 14,
-  },
-  sentenceHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  sentenceTexts: {
-    flex: 1,
+    paddingVertical: 6,
     minWidth: 0,
-    gap: 4,
   },
-  sentenceOriginal: {
-    fontSize: 18,
-    fontWeight: '700',
-    lineHeight: 25,
-  },
-  sentenceTrans: {
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  sentenceDelBtn: {
-    minWidth: 28,
-    height: 28,
-    paddingHorizontal: 8,
-    borderRadius: 8,
+  quickAddIconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 9,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sentenceDelText: {
+  quickAddSubmitBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  knownSection: {
+    gap: 10,
+    marginTop: 4,
+  },
+  knownHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  knownHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  knownHeaderText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  knownGridOpacity: {
+    opacity: 0.85,
+  },
+  sentenceComposer: {
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 13,
+    gap: 10,
+  },
+  sentenceInput: {
+    fontSize: 15,
+    lineHeight: 22,
+    minHeight: 56,
+    paddingVertical: 2,
+    paddingHorizontal: 2,
+  },
+  sentenceComposerFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  aiHintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  aiDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  aiHintText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  analyzeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    height: 34,
+    borderRadius: 9,
+    minWidth: 108,
+  },
+  analyzeBtnText: {
     fontSize: 13,
     fontWeight: '600',
   },
-  subBlock: {
-    gap: 8,
+  sentencesList: {
+    gap: 12,
   },
-  subBlockLabel: {
+  popoverBody: {
+    gap: 2,
+  },
+  langPopoverRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  langPopoverSelect: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+    borderRadius: 8,
+    minWidth: 0,
+  },
+  langCodeBadge: {
+    fontSize: 10,
+    fontWeight: '700',
+    width: 24,
+  },
+  langPopoverName: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  langPopoverCount: {
     fontSize: 11,
     fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
   },
-  tokensWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+  langEditBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 2,
   },
-  tokenCard: {
-    borderRadius: 11,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    gap: 3,
-    minWidth: 140,
+  popoverDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginVertical: 4,
+    marginHorizontal: 6,
   },
-  tokenTop: {
+  popoverActionRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+    borderRadius: 8,
   },
-  tokenSurface: {
-    fontSize: 14,
-    fontWeight: '700',
+  popoverActionText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '500',
   },
-  tokenBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
+  popoverAiRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
   },
-  tokenBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  tokenPlus: {
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  tokenMeta: {
-    fontSize: 12,
-  },
-  tokenRole: {
+  popoverAiText: {
     fontSize: 11,
-    opacity: 0.8,
+    fontWeight: '500',
   },
-  rulesList: {
-    gap: 8,
-  },
-  ruleBox: {
-    borderRadius: 11,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: 11,
-    gap: 4,
-  },
-  ruleTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  ruleDesc: {
-    fontSize: 13,
-    lineHeight: 19,
-  },
-  summaryBox: {
-    borderRadius: 10,
-    padding: 11,
-  },
-  summaryText: {
-    fontSize: 13,
-    lineHeight: 19,
+  disabled: {
+    opacity: 0.35,
   },
 });

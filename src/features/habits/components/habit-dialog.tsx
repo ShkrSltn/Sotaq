@@ -1,20 +1,31 @@
-import { useEffect, useState } from 'react';
-import { Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon, type IconName } from '@/components/app-icon';
 import { RipplePressable } from '@/components/ripple-pressable';
 import {
   HABIT_COLORS,
   HABIT_ICONS,
-  type HabitRecord,
+  type HabitWithStats,
 } from '@/features/habits/types';
-import { useThemeColors } from '@/theme/colors';
+import { toDateKey } from '@/features/kanban/types';
+import { useThemeColors, useViewport } from '@/theme/colors';
 
 type Props = {
   visible: boolean;
   mode: 'create' | 'edit';
-  habit?: HabitRecord | null;
+  habit?: HabitWithStats | null;
   onClose: () => void;
   onSave: (input: {
     title: string;
@@ -36,6 +47,9 @@ export function HabitDialog(props: Props) {
 
 function HabitDialogContent({ mode, habit, onClose, onSave, onDelete }: Props) {
   const colors = useThemeColors();
+  const { isDesktop } = useViewport();
+  const insets = useSafeAreaInsets();
+
   const [title, setTitle] = useState(mode === 'edit' && habit ? habit.title : '');
   const [color, setColor] = useState(mode === 'edit' && habit ? habit.color : HABIT_COLORS[0]);
   const [icon, setIcon] = useState<IconName>(mode === 'edit' && habit ? habit.icon : 'flame');
@@ -43,6 +57,24 @@ function HabitDialogContent({ mode, habit, onClose, onSave, onDelete }: Props) {
     mode === 'edit' && habit ? habit.targetPerWeek : 7,
   );
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const heatmapDays = useMemo(() => {
+    if (mode !== 'edit' || !habit) {
+      return [];
+    }
+    const today = new Date();
+    const list: { dateKey: string; done: boolean; isToday: boolean }[] = [];
+    for (let i = 27; i >= 0; i -= 1) {
+      const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+      const key = toDateKey(d);
+      list.push({
+        dateKey: key,
+        done: habit.completedDates.has(key),
+        isToday: i === 0,
+      });
+    }
+    return list;
+  }, [mode, habit]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') {
@@ -83,13 +115,30 @@ function HabitDialogContent({ mode, habit, onClose, onSave, onDelete }: Props) {
       <View style={styles.root}>
         <Pressable style={styles.backdrop} onPress={onClose} />
         <Animated.View
-          entering={FadeIn.duration(140)}
-          style={[styles.dialog, { backgroundColor: colors.surface, borderColor: colors.line }]}>
-          <View style={styles.headerRow}>
+          entering={
+            isDesktop ? FadeIn.duration(140) : SlideInDown.springify().damping(24).stiffness(260)
+          }
+          style={[
+            styles.dialog,
+            isDesktop ? styles.dialogDesktop : styles.dialogMobile,
+            {
+              backgroundColor: colors.surface,
+              borderColor: colors.line,
+              paddingBottom: isDesktop ? 16 : Math.max(insets.bottom, 16),
+            },
+          ]}>
+          {!isDesktop ? (
+            <View style={styles.grabberRow}>
+              <View style={[styles.grabber, { backgroundColor: colors.line }]} />
+            </View>
+          ) : null}
+
+          <View style={[styles.headerRow, { borderBottomColor: colors.line }]}>
             <Text style={[styles.title, { color: colors.text }]}>
-              {mode === 'edit' ? 'Редактировать привычку' : 'Новая привычка'}
+              {mode === 'edit' ? 'Привычка' : 'Новая привычка'}
             </Text>
             <RipplePressable
+              accessibilityLabel="Закрыть"
               onPress={onClose}
               style={StyleSheet.flatten([
                 styles.closeBtn,
@@ -99,99 +148,156 @@ function HabitDialogContent({ mode, habit, onClose, onSave, onDelete }: Props) {
             </RipplePressable>
           </View>
 
-          <TextInput
-            autoFocus
-            value={title}
-            onChangeText={setTitle}
-            onSubmitEditing={handleSubmit}
-            placeholder="Например: Читать 20 минут"
-            placeholderTextColor={colors.muted}
-            style={[
-              styles.input,
-              {
-                color: colors.text,
-                backgroundColor: colors.surfaceSubtle,
-                borderColor: colors.line,
-              },
-            ]}
-          />
-
-          <View style={styles.field}>
-            <Text style={[styles.label, { color: colors.muted }]}>Цвет</Text>
-            <View style={styles.rowWrap}>
-              {HABIT_COLORS.map((swatch) => {
-                const selected = color === swatch;
-                return (
-                  <RipplePressable
-                    key={swatch}
-                    onPress={() => setColor(swatch)}
-                    style={StyleSheet.flatten([
-                      styles.swatch,
-                      {
-                        backgroundColor: swatch,
-                        borderColor: selected ? colors.text : 'transparent',
-                      },
-                    ])}>
-                    {selected ? <AppIcon name="check" size={12} color="#FFFFFF" strokeWidth={2.5} /> : null}
-                  </RipplePressable>
-                );
-              })}
-            </View>
-          </View>
-
-          <View style={styles.field}>
-            <Text style={[styles.label, { color: colors.muted }]}>Иконка</Text>
-            <View style={styles.rowWrap}>
-              {HABIT_ICONS.map((ic) => {
-                const selected = icon === ic;
-                return (
-                  <RipplePressable
-                    key={ic}
-                    onPress={() => setIcon(ic)}
-                    style={StyleSheet.flatten([
-                      styles.iconChip,
-                      {
-                        backgroundColor: selected ? colors.surfaceActive : colors.surfaceSubtle,
-                        borderColor: selected ? colors.text : colors.line,
-                      },
-                    ])}>
-                    <AppIcon name={ic} size="sm" color={selected ? color : colors.muted} />
-                  </RipplePressable>
-                );
-              })}
-            </View>
-          </View>
-
-          <View style={styles.field}>
-            <Text style={[styles.label, { color: colors.muted }]}>Цель в неделю</Text>
-            <View style={styles.rowWrap}>
-              {TARGET_PRESETS.map((num) => {
-                const selected = targetPerWeek === num;
-                return (
-                  <RipplePressable
-                    key={num}
-                    onPress={() => setTargetPerWeek(num)}
-                    style={StyleSheet.flatten([
-                      styles.targetChip,
-                      {
-                        backgroundColor: selected ? colors.surfaceActive : colors.surfaceSubtle,
-                        borderColor: selected ? colors.text : colors.line,
-                      },
-                    ])}>
-                    <Text
-                      style={[
-                        styles.targetText,
-                        { color: selected ? colors.text : colors.muted },
-                      ]}>
-                      {num === 7 ? 'Каждый день (7)' : `${num} дн / нед`}
+          <ScrollView
+            style={styles.body}
+            contentContainerStyle={styles.bodyContent}
+            keyboardShouldPersistTaps="handled">
+            {/* 28-Day Heatmap & Streak Stats in Edit Mode */}
+            {mode === 'edit' && habit ? (
+              <View
+                style={[
+                  styles.statsCard,
+                  { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
+                ]}>
+                <View style={styles.statsNumsRow}>
+                  <View style={styles.statBox}>
+                    <Text style={[styles.statNum, { color: colors.text }]}>
+                      {habit.currentStreak}д
                     </Text>
-                  </RipplePressable>
-                );
-              })}
-            </View>
-          </View>
+                    <Text style={[styles.statLabel, { color: colors.muted }]}>Серия</Text>
+                  </View>
+                  <View style={styles.statBox}>
+                    <Text style={[styles.statNum, { color: colors.text }]}>
+                      {habit.bestStreak}д
+                    </Text>
+                    <Text style={[styles.statLabel, { color: colors.muted }]}>Рекорд</Text>
+                  </View>
+                  <View style={styles.statBox}>
+                    <Text style={[styles.statNum, { color: colors.text }]}>
+                      {habit.completedDates.size}
+                    </Text>
+                    <Text style={[styles.statLabel, { color: colors.muted }]}>Всего</Text>
+                  </View>
+                </View>
 
-          <View style={styles.footer}>
+                <View style={styles.heatmapWrap}>
+                  <Text style={[styles.heatmapCaption, { color: colors.muted }]}>
+                    Последние 28 дней
+                  </Text>
+                  <View style={styles.heatmapGrid}>
+                    {heatmapDays.map((d) => (
+                      <View
+                        key={d.dateKey}
+                        style={[
+                          styles.heatCell,
+                          {
+                            backgroundColor: d.done ? color : colors.surface,
+                            borderColor: d.isToday ? colors.text : colors.line,
+                          },
+                        ]}
+                      />
+                    ))}
+                  </View>
+                </View>
+              </View>
+            ) : null}
+
+            <TextInput
+              autoFocus={mode === 'create'}
+              value={title}
+              onChangeText={setTitle}
+              onSubmitEditing={handleSubmit}
+              placeholder="Например: Читать 20 минут"
+              placeholderTextColor={colors.muted}
+              style={[
+                styles.input,
+                {
+                  color: colors.text,
+                  backgroundColor: colors.surfaceSubtle,
+                  borderColor: colors.line,
+                },
+              ]}
+            />
+
+            <View style={styles.field}>
+              <Text style={[styles.label, { color: colors.muted }]}>Цвет</Text>
+              <View style={styles.rowWrap}>
+                {HABIT_COLORS.map((swatch) => {
+                  const selected = color === swatch;
+                  return (
+                    <RipplePressable
+                      key={swatch}
+                      onPress={() => setColor(swatch)}
+                      style={StyleSheet.flatten([
+                        styles.swatch,
+                        {
+                          backgroundColor: swatch,
+                          borderColor: selected ? colors.text : 'transparent',
+                        },
+                      ])}>
+                      {selected ? (
+                        <AppIcon name="check" size={12} color="#FFFFFF" strokeWidth={2.5} />
+                      ) : null}
+                    </RipplePressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={styles.field}>
+              <Text style={[styles.label, { color: colors.muted }]}>Иконка</Text>
+              <View style={styles.rowWrap}>
+                {HABIT_ICONS.map((ic) => {
+                  const selected = icon === ic;
+                  return (
+                    <RipplePressable
+                      key={ic}
+                      onPress={() => setIcon(ic)}
+                      style={StyleSheet.flatten([
+                        styles.iconChip,
+                        {
+                          backgroundColor: selected ? colors.surfaceActive : colors.surfaceSubtle,
+                          borderColor: selected ? colors.text : colors.line,
+                        },
+                      ])}>
+                      <AppIcon name={ic} size="sm" color={selected ? color : colors.muted} />
+                    </RipplePressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={styles.field}>
+              <Text style={[styles.label, { color: colors.muted }]}>Цель в неделю</Text>
+              <View style={styles.rowWrap}>
+                {TARGET_PRESETS.map((num) => {
+                  const selected = targetPerWeek === num;
+                  return (
+                    <RipplePressable
+                      key={num}
+                      onPress={() => setTargetPerWeek(num)}
+                      style={StyleSheet.flatten([
+                        styles.targetChip,
+                        {
+                          backgroundColor: selected ? colors.surfaceActive : colors.surfaceSubtle,
+                          borderColor: selected ? colors.text : colors.line,
+                        },
+                      ])}>
+                      <Text
+                        style={[
+                          styles.targetText,
+                          { color: selected ? colors.text : colors.muted },
+                        ]}>
+                        {num === 7 ? 'Каждый день (7)' : `${num} дн / нед`}
+                      </Text>
+                    </RipplePressable>
+                  );
+                })}
+              </View>
+            </View>
+          </ScrollView>
+
+          <View style={[styles.footer, { borderTopColor: colors.line }]}>
             {mode === 'edit' && onDelete && habit ? (
               <RipplePressable
                 onPress={handleDelete}
@@ -247,24 +353,48 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 20,
   },
   backdrop: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(10, 12, 16, 0.5)',
+    backgroundColor: 'rgba(10, 12, 16, 0.52)',
   },
   dialog: {
     width: '100%',
-    maxWidth: 420,
-    borderRadius: 18,
     borderWidth: StyleSheet.hairlineWidth,
-    padding: 18,
-    gap: 14,
+    overflow: 'hidden',
+  },
+  dialogDesktop: {
+    maxWidth: 440,
+    maxHeight: '88%',
+    borderRadius: 18,
+  },
+  dialogMobile: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    maxHeight: '90%',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderBottomWidth: 0,
+  },
+  grabberRow: {
+    alignItems: 'center',
+    paddingTop: 10,
+    paddingBottom: 2,
+  },
+  grabber: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
   },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingVertical: 13,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   title: {
     fontSize: 16,
@@ -276,6 +406,57 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  body: {
+    flexGrow: 0,
+  },
+  bodyContent: {
+    padding: 18,
+    gap: 14,
+  },
+  statsCard: {
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 12,
+    gap: 12,
+  },
+  statsNumsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  statBox: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 2,
+  },
+  statNum: {
+    fontSize: 18,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  statLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  heatmapWrap: {
+    gap: 6,
+  },
+  heatmapCaption: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  heatmapGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+  },
+  heatCell: {
+    width: '12.5%',
+    aspectRatio: 1,
+    maxWidth: 24,
+    borderRadius: 5,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   input: {
     borderRadius: 10,
@@ -300,36 +481,38 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   swatch: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
   iconChip: {
-    width: 34,
-    height: 34,
-    borderRadius: 9,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },
   targetChip: {
-    paddingHorizontal: 11,
-    paddingVertical: 7,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: 9,
     borderWidth: StyleSheet.hairlineWidth,
   },
   targetText: {
-    fontSize: 12,
+    fontSize: 12.5,
     fontWeight: '600',
   },
   footer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 2,
+    paddingHorizontal: 18,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
   actions: {
     flexDirection: 'row',

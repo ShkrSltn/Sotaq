@@ -1,4 +1,4 @@
-import { type ComponentRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -9,19 +9,19 @@ import {
   View,
 } from 'react-native';
 
-import {
-  AnchoredPopover,
-  type AnchorRect,
-  measureAnchor,
-} from '@/components/anchored-popover';
 import { AppIcon } from '@/components/app-icon';
 import { DragTrashZone } from '@/components/drag-trash-zone';
 import { RipplePressable } from '@/components/ripple-pressable';
 import { HistoryToast, UndoRedoButtons } from '@/components/undo-redo-bar';
-import { WebDragBox, type WebDomDragEvent } from '@/components/web-drag-box';
+import type { WebDomDragEvent } from '@/components/web-drag-box';
 import { useDatabase } from '@/db/provider';
 import { useAuth } from '@/features/auth/auth-context';
 import { HabitDialog } from '@/features/habits/components/habit-dialog';
+import {
+  HABIT_DRAG_MIME,
+  HabitDesktopRow,
+  HabitMobileCard,
+} from '@/features/habits/components/habit-item';
 import {
   captureHabitsSnapshot,
   createHabit,
@@ -42,8 +42,6 @@ import {
 import { useUndoRedoHotkeys } from '@/hooks/use-undo-redo';
 import { useThemeColors, useViewport } from '@/theme/colors';
 
-const HABIT_DRAG_MIME = 'application/x-sotaq-habit';
-const DROP_BLUE = '#3B82F6';
 const MAX_HISTORY = 40;
 
 export function HabitsWorkspace() {
@@ -57,26 +55,23 @@ export function HabitsWorkspace() {
   const [loading, setLoading] = useState(true);
   const [daysCount, setDaysCount] = useState<7 | 14>(7);
   const [weekOffset, setWeekOffset] = useState(0);
+  const [onlyRemainingToday, setOnlyRemainingToday] = useState(false);
   const [quickTitle, setQuickTitle] = useState('');
 
   const [dialog, setDialog] = useState<{
     open: boolean;
     mode: 'create' | 'edit';
-    habit: HabitRecord | null;
+    habit: HabitWithStats | null;
   }>({ open: false, mode: 'create', habit: null });
 
-  const [menuHabitId, setMenuHabitId] = useState<string | null>(null);
-  const [menuAnchor, setMenuAnchor] = useState<AnchorRect | null>(null);
-  const menuRefs = useRef<Record<string, ComponentRef<typeof View> | null>>({});
-
-  // Drag-and-drop state
+  // Drag-and-drop state (Desktop Web)
   const [draggingHabitId, setDraggingHabitId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{
     id: string;
     position: 'before' | 'after';
   } | null>(null);
 
-  // Undo/Redo
+  // Undo / Redo
   const pastRef = useRef<HabitsSnapshot[]>([]);
   const futureRef = useRef<HabitsSnapshot[]>([]);
   const [historyMeta, setHistoryMeta] = useState({ canUndo: false, canRedo: false });
@@ -197,22 +192,69 @@ export function HabitsWorkspace() {
     },
   });
 
+  // Web keyboard shortcuts: Left/Right week, T = current week
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || dialog.open) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        setWeekOffset((v) => v - 1);
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        setWeekOffset((v) => Math.min(0, v + 1));
+      } else if (event.code === 'KeyT') {
+        event.preventDefault();
+        setWeekOffset(0);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [dialog.open]);
+
   const resolvedDaysCount: 7 | 14 = isDesktop ? daysCount : 7;
   const { days, rangeLabel } = useMemo(
     () => buildHabitDays(resolvedDaysCount, weekOffset),
     [resolvedDaysCount, weekOffset],
   );
 
-  const todaySummary = useMemo(() => {
-    const done = habits.filter((h) => h.completedToday).length;
+  const summary = useMemo(() => {
     const total = habits.length;
-    const bestActiveStreak = habits.reduce((max, h) => Math.max(max, h.currentStreak), 0);
-    return { done, total, bestActiveStreak };
-  }, [habits]);
+    const doneToday = habits.filter((h) => h.completedToday).length;
+    const remainingToday = Math.max(0, total - doneToday);
+    const todayPct = total > 0 ? Math.round((doneToday / total) * 100) : 0;
+    const topStreak = habits.reduce((max, h) => Math.max(max, h.currentStreak), 0);
 
-  const activeMenuHabit = useMemo(
-    () => habits.find((h) => h.id === menuHabitId) ?? null,
-    [habits, menuHabitId],
+    const periodMultiplier = resolvedDaysCount === 14 ? 2 : 1;
+    let totalGoal = 0;
+    let totalAchieved = 0;
+    for (const h of habits) {
+      const target = h.targetPerWeek * periodMultiplier;
+      const done = days.reduce((acc, d) => acc + (h.completedDates.has(d.dateKey) ? 1 : 0), 0);
+      totalGoal += target;
+      totalAchieved += Math.min(done, target);
+    }
+    const periodPct = totalGoal > 0 ? Math.round((totalAchieved / totalGoal) * 100) : 0;
+
+    return { total, doneToday, remainingToday, todayPct, topStreak, periodPct };
+  }, [habits, days, resolvedDaysCount]);
+
+  const visibleHabits = useMemo(
+    () => (onlyRemainingToday ? habits.filter((h) => !h.completedToday) : habits),
+    [habits, onlyRemainingToday],
   );
 
   async function handleToggleCell(habitId: string, dateKey: string) {
@@ -303,15 +345,6 @@ export function HabitsWorkspace() {
     await refresh();
   }
 
-  function resolveDropPos(event: WebDomDragEvent): 'before' | 'after' {
-    const el = event.currentTarget as HTMLElement | null;
-    if (!el || typeof el.getBoundingClientRect !== 'function') {
-      return 'after';
-    }
-    const rect = el.getBoundingClientRect();
-    return event.clientY - rect.top < rect.height / 2 ? 'before' : 'after';
-  }
-
   async function handleDropTrash(event: WebDomDragEvent) {
     const id = event.dataTransfer?.getData(HABIT_DRAG_MIME) || draggingHabitId;
     setDraggingHabitId(null);
@@ -328,6 +361,8 @@ export function HabitsWorkspace() {
       </View>
     );
   }
+
+  const periodMultiplier = resolvedDaysCount === 14 ? 2 : 1;
 
   return (
     <View style={[styles.screen, isDesktop ? styles.screenDesktop : styles.screenMobile]}>
@@ -346,10 +381,10 @@ export function HabitsWorkspace() {
               <AppIcon name="chevronLeft" size="xs" color={colors.muted} />
             </RipplePressable>
 
-            <RipplePressable
-              onPress={() => setWeekOffset(0)}
-              style={styles.rangeBtn}>
-              <Text style={[styles.rangeText, { color: colors.text }]}>{rangeLabel}</Text>
+            <RipplePressable onPress={() => setWeekOffset(0)} style={styles.rangeBtn}>
+              <Text style={[styles.rangeText, { color: colors.text }]} numberOfLines={1}>
+                {rangeLabel}
+              </Text>
             </RipplePressable>
 
             <RipplePressable
@@ -373,22 +408,6 @@ export function HabitsWorkspace() {
               ])}>
               <Text style={[styles.todayBtnText, { color: colors.text }]}>Сегодня</Text>
             </RipplePressable>
-          ) : null}
-
-          {isDesktop && todaySummary.total > 0 ? (
-            <View style={styles.summaryRow}>
-              <Text style={[styles.summaryMeta, { color: colors.muted }]}>
-                Сегодня: {todaySummary.done}/{todaySummary.total}
-              </Text>
-              {todaySummary.bestActiveStreak > 0 ? (
-                <View style={[styles.streakChip, { backgroundColor: colors.warningBg }]}>
-                  <AppIcon name="flame" size={11} color={colors.warning} />
-                  <Text style={[styles.streakChipText, { color: colors.warning }]}>
-                    {todaySummary.bestActiveStreak}д
-                  </Text>
-                </View>
-              ) : null}
-            </View>
           ) : null}
         </View>
 
@@ -484,6 +503,88 @@ export function HabitsWorkspace() {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled">
         <View style={styles.inner}>
+          {/* Compact Momentum Summary Bar */}
+          {summary.total > 0 ? (
+            <View
+              style={[
+                styles.summaryCard,
+                { backgroundColor: colors.surface, borderColor: colors.line },
+              ]}>
+              <View style={styles.summaryTopRow}>
+                <View style={styles.summaryMetrics}>
+                  <View style={styles.summaryTodayGroup}>
+                    <Text
+                      style={[
+                        styles.summaryPrimary,
+                        {
+                          color:
+                            summary.remainingToday === 0 ? colors.success : colors.text,
+                        },
+                      ]}>
+                      {summary.remainingToday === 0
+                        ? `Все выполнены (${summary.total}/${summary.total})`
+                        : `Сегодня ${summary.doneToday} из ${summary.total}`}
+                    </Text>
+                    <View style={styles.summarySecondaryRow}>
+                      <View style={styles.metricPill}>
+                        <AppIcon
+                          name="flame"
+                          size={11}
+                          color={summary.topStreak > 0 ? colors.warning : colors.muted}
+                        />
+                        <Text style={[styles.metricText, { color: colors.muted }]}>
+                          Серия: {summary.topStreak}д
+                        </Text>
+                      </View>
+                      <Text style={[styles.metricDot, { color: colors.muted }]}>·</Text>
+                      <Text style={[styles.metricText, { color: colors.muted }]}>
+                        Период: {summary.periodPct}%
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                {summary.remainingToday > 0 || onlyRemainingToday ? (
+                  <RipplePressable
+                    onPress={() => setOnlyRemainingToday((v) => !v)}
+                    style={StyleSheet.flatten([
+                      styles.remainingChip,
+                      {
+                        backgroundColor: onlyRemainingToday
+                          ? colors.surfaceActive
+                          : colors.surfaceSubtle,
+                        borderColor: onlyRemainingToday ? colors.text : colors.line,
+                      },
+                    ])}>
+                    <Text
+                      style={[
+                        styles.remainingChipText,
+                        { color: onlyRemainingToday ? colors.text : colors.muted },
+                      ]}>
+                      {onlyRemainingToday
+                        ? 'Показать все'
+                        : `Осталось (${summary.remainingToday})`}
+                    </Text>
+                  </RipplePressable>
+                ) : null}
+              </View>
+
+              <View style={[styles.summaryBarTrack, { backgroundColor: colors.surfaceSubtle }]}>
+                <View
+                  style={[
+                    styles.summaryBarFill,
+                    {
+                      width: `${summary.todayPct}%`,
+                      backgroundColor:
+                        summary.remainingToday === 0 ? colors.success : colors.accent,
+                    },
+                  ]}
+                />
+              </View>
+            </View>
+          ) : null}
+
+          {/* Empty State / Habit List */}
           {habits.length === 0 ? (
             <View
               style={[
@@ -493,22 +594,40 @@ export function HabitsWorkspace() {
               <View style={[styles.emptyIcon, { backgroundColor: colors.surfaceSubtle }]}>
                 <AppIcon name="flame" size="lg" color={colors.muted} />
               </View>
-              <Text style={[styles.emptyTitle, { color: colors.text }]}>
-                Привычек пока нет
-              </Text>
+              <Text style={[styles.emptyTitle, { color: colors.text }]}>Привычек пока нет</Text>
               <Text style={[styles.emptySub, { color: colors.muted }]}>
-                Добавьте первую привычку ниже, чтобы отмечать прогресс каждый день и собирать серии.
+                Добавьте первую привычку ниже — на телефоне и десктопе её можно отмечать в одно
+                касание и следить за серией.
               </Text>
             </View>
-          ) : (
+          ) : visibleHabits.length === 0 ? (
+            <View
+              style={[
+                styles.emptyCard,
+                { backgroundColor: colors.surface, borderColor: colors.line },
+              ]}>
+              <AppIcon name="checkCircle" size="lg" color={colors.success} />
+              <Text style={[styles.emptyTitle, { color: colors.text }]}>
+                На сегодня всё выполнено!
+              </Text>
+              <RipplePressable
+                onPress={() => setOnlyRemainingToday(false)}
+                style={StyleSheet.flatten([
+                  styles.showAllBtn,
+                  { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
+                ])}>
+                <Text style={[styles.showAllText, { color: colors.text }]}>Показать все</Text>
+              </RipplePressable>
+            </View>
+          ) : isDesktop ? (
             <View
               style={[
                 styles.gridCard,
                 { backgroundColor: colors.surface, borderColor: colors.line },
               ]}>
-              {/* Column Headers */}
+              {/* Desktop Column Headers */}
               <View style={[styles.gridHeader, { borderBottomColor: colors.line }]}>
-                <View style={isDesktop ? styles.nameColDesktop : styles.nameColMobile}>
+                <View style={styles.desktopHeaderNameCol}>
                   <Text style={[styles.colCaption, { color: colors.muted }]}>Привычка</Text>
                 </View>
 
@@ -539,195 +658,63 @@ export function HabitsWorkspace() {
                   ))}
                 </View>
 
-                {isDesktop ? (
-                  <View style={styles.statsCol}>
-                    <Text style={[styles.colCaption, { color: colors.muted }]}>Серия</Text>
-                  </View>
-                ) : null}
+                <View style={styles.desktopHeaderStatsCol}>
+                  <Text style={[styles.colCaption, { color: colors.muted }]}>Серия</Text>
+                </View>
                 <View style={styles.menuSpacer} />
               </View>
 
-              {/* Habit Rows */}
-              {habits.map((habit, rowIdx) => {
-                const weekDone = days.reduce(
-                  (acc, d) => acc + (habit.completedDates.has(d.dateKey) ? 1 : 0),
-                  0,
-                );
-                const dropPos = dropTarget?.id === habit.id ? dropTarget.position : null;
-                const isLast = rowIdx === habits.length - 1;
-
-                return (
-                  <View
-                    key={habit.id}
-                    style={[
-                      styles.rowWrap,
-                      draggingHabitId === habit.id ? styles.dragging : null,
-                    ]}>
-                    {dropPos === 'before' ? (
-                      <View pointerEvents="none" style={[styles.dropLine, styles.dropBefore]} />
-                    ) : null}
-
-                    <WebDragBox
-                      draggable={Platform.OS === 'web'}
-                      onDragStart={(event) => {
-                        event.stopPropagation();
-                        if (event.dataTransfer) {
-                          event.dataTransfer.effectAllowed = 'move';
-                          event.dataTransfer.setData(HABIT_DRAG_MIME, habit.id);
-                          event.dataTransfer.setData('text/plain', habit.id);
-                        }
-                        setDraggingHabitId(habit.id);
-                      }}
-                      onDragEnd={() => {
-                        setDraggingHabitId(null);
-                        setDropTarget(null);
-                      }}
-                      onDragOver={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        if (event.dataTransfer) {
-                          event.dataTransfer.dropEffect = 'move';
-                        }
-                        const pos = resolveDropPos(event);
-                        setDropTarget((prev) =>
-                          prev?.id === habit.id && prev.position === pos
-                            ? prev
-                            : { id: habit.id, position: pos },
-                        );
-                      }}
-                      onDragLeave={() => {
-                        setDropTarget((prev) => (prev?.id === habit.id ? null : prev));
-                      }}
-                      onDrop={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        const draggedId =
-                          event.dataTransfer?.getData(HABIT_DRAG_MIME) ||
-                          event.dataTransfer?.getData('text/plain') ||
-                          '';
-                        handleDropHabit(draggedId, habit.id, resolveDropPos(event));
-                      }}
-                      style={[
-                        styles.habitRow,
-                        !isLast ? { borderBottomColor: colors.line, borderBottomWidth: StyleSheet.hairlineWidth } : null,
-                        Platform.OS === 'web' ? styles.rowWebDrag : null,
-                      ]}>
-                      {/* Name & Icon */}
-                      <View style={isDesktop ? styles.nameColDesktop : styles.nameColMobile}>
-                        <View style={styles.habitIdentity}>
-                          {Platform.OS === 'web' ? (
-                            <View style={styles.gripIcon}>
-                              <AppIcon name="grip" size="xs" color={colors.muted} />
-                            </View>
-                          ) : null}
-                          <View
-                            style={[
-                              styles.habitIconBox,
-                              { backgroundColor: `${habit.color}20` },
-                            ]}>
-                            <AppIcon name={habit.icon} size="xs" color={habit.color} />
-                          </View>
-                          <View style={styles.habitTexts}>
-                            <Text style={[styles.habitTitle, { color: colors.text }]} numberOfLines={1}>
-                              {habit.title}
-                            </Text>
-                            {!isDesktop ? (
-                              <Text style={[styles.mobileStreakSub, { color: colors.muted }]}>
-                                {habit.currentStreak > 0 ? `🔥 ${habit.currentStreak}д · ` : ''}
-                                {weekDone}/{habit.targetPerWeek}
-                              </Text>
-                            ) : null}
-                          </View>
-                        </View>
-                      </View>
-
-                      {/* Day Check Cells */}
-                      <View style={styles.daysRow}>
-                        {days.map((day) => {
-                          const done = habit.completedDates.has(day.dateKey);
-                          return (
-                            <View key={day.dateKey} style={styles.dayCellWrap}>
-                              <RipplePressable
-                                accessibilityLabel={`${habit.title} — ${day.dateKey}`}
-                                disabled={day.isFuture}
-                                onPress={() => handleToggleCell(habit.id, day.dateKey)}
-                                style={StyleSheet.flatten([
-                                  styles.checkCell,
-                                  {
-                                    backgroundColor: done
-                                      ? habit.color
-                                      : day.isToday
-                                        ? colors.surfaceActive
-                                        : colors.surfaceSubtle,
-                                    borderColor: done
-                                      ? habit.color
-                                      : day.isToday
-                                        ? colors.muted
-                                        : colors.line,
-                                  },
-                                  day.isFuture ? styles.futureCell : null,
-                                ])}>
-                                {done ? (
-                                  <AppIcon name="check" size={13} color="#FFFFFF" strokeWidth={2.6} />
-                                ) : null}
-                              </RipplePressable>
-                            </View>
-                          );
-                        })}
-                      </View>
-
-                      {/* Desktop Streak + Weekly Progress */}
-                      {isDesktop ? (
-                        <View style={styles.statsCol}>
-                          <View style={styles.streakInline}>
-                            <AppIcon
-                              name="flame"
-                              size={12}
-                              color={habit.currentStreak > 0 ? colors.warning : colors.muted}
-                            />
-                            <Text
-                              style={[
-                                styles.streakNum,
-                                {
-                                  color: habit.currentStreak > 0 ? colors.text : colors.muted,
-                                },
-                              ]}>
-                              {habit.currentStreak}
-                            </Text>
-                          </View>
-                          <Text style={[styles.goalRatio, { color: colors.muted }]}>
-                            {weekDone}/{resolvedDaysCount === 14 ? habit.targetPerWeek * 2 : habit.targetPerWeek}
-                          </Text>
-                        </View>
-                      ) : null}
-
-                      {/* More Menu */}
-                      <View
-                        ref={(node) => {
-                          menuRefs.current[habit.id] = node;
-                        }}
-                        collapsable={false}
-                        style={styles.menuSpacer}>
-                        <RipplePressable
-                          accessibilityLabel="Настройки привычки"
-                          onPress={() => {
-                            measureAnchor(menuRefs.current[habit.id], (rect) => {
-                              setMenuAnchor(rect);
-                              setMenuHabitId(habit.id);
-                            });
-                          }}
-                          style={styles.moreBtn}>
-                          <AppIcon name="more" size="xs" color={colors.muted} />
-                        </RipplePressable>
-                      </View>
-                    </WebDragBox>
-
-                    {dropPos === 'after' ? (
-                      <View pointerEvents="none" style={[styles.dropLine, styles.dropAfter]} />
-                    ) : null}
-                  </View>
-                );
-              })}
+              {visibleHabits.map((habit, idx) => (
+                <HabitDesktopRow
+                  key={habit.id}
+                  habit={habit}
+                  days={days}
+                  targetForPeriod={habit.targetPerWeek * periodMultiplier}
+                  colors={colors}
+                  isLast={idx === visibleHabits.length - 1}
+                  canMoveUp={idx > 0}
+                  canMoveDown={idx < visibleHabits.length - 1}
+                  isDragging={draggingHabitId === habit.id}
+                  dropPosition={dropTarget?.id === habit.id ? dropTarget.position : null}
+                  onToggleCell={handleToggleCell}
+                  onEdit={(item) => setDialog({ open: true, mode: 'edit', habit: item })}
+                  onMoveByOffset={handleMoveByOffset}
+                  onDelete={handleDeleteHabit}
+                  onDragStart={(id) => setDraggingHabitId(id)}
+                  onDragEnd={() => {
+                    setDraggingHabitId(null);
+                    setDropTarget(null);
+                  }}
+                  onDragOver={(id, pos) => {
+                    setDropTarget((prev) =>
+                      prev?.id === id && prev.position === pos ? prev : { id, position: pos },
+                    );
+                  }}
+                  onDragLeave={(id) => {
+                    setDropTarget((prev) => (prev?.id === id ? null : prev));
+                  }}
+                  onDropHabit={handleDropHabit}
+                />
+              ))}
+            </View>
+          ) : (
+            /* Mobile-First Spacious Habit Cards */
+            <View style={styles.mobileCardsList}>
+              {visibleHabits.map((habit, idx) => (
+                <HabitMobileCard
+                  key={habit.id}
+                  habit={habit}
+                  days={days}
+                  targetForPeriod={habit.targetPerWeek}
+                  colors={colors}
+                  canMoveUp={idx > 0}
+                  canMoveDown={idx < visibleHabits.length - 1}
+                  onToggleCell={handleToggleCell}
+                  onEdit={(item) => setDialog({ open: true, mode: 'edit', habit: item })}
+                  onMoveByOffset={handleMoveByOffset}
+                  onDelete={handleDeleteHabit}
+                />
+              ))}
             </View>
           )}
 
@@ -759,70 +746,6 @@ export function HabitsWorkspace() {
           </View>
         </View>
       </ScrollView>
-
-      {/* Row Actions Popover */}
-      <AnchoredPopover
-        visible={Boolean(activeMenuHabit)}
-        anchor={menuAnchor}
-        width={196}
-        estimatedHeight={190}
-        align="right"
-        colors={colors}
-        onClose={() => setMenuHabitId(null)}>
-        {activeMenuHabit ? (
-          <View style={styles.popoverBody}>
-            <RipplePressable
-              onPress={() => {
-                const target = activeMenuHabit;
-                setMenuHabitId(null);
-                setDialog({ open: true, mode: 'edit', habit: target });
-              }}
-              style={styles.menuRow}>
-              <AppIcon name="edit" size="xs" color={colors.muted} />
-              <Text style={[styles.menuRowText, { color: colors.text }]}>Редактировать</Text>
-            </RipplePressable>
-
-            {habits.findIndex((h) => h.id === activeMenuHabit.id) > 0 ? (
-              <RipplePressable
-                onPress={() => {
-                  const id = activeMenuHabit.id;
-                  setMenuHabitId(null);
-                  handleMoveByOffset(id, -1);
-                }}
-                style={styles.menuRow}>
-                <AppIcon name="arrowUp" size="xs" color={colors.muted} />
-                <Text style={[styles.menuRowText, { color: colors.text }]}>Поднять выше</Text>
-              </RipplePressable>
-            ) : null}
-
-            {habits.findIndex((h) => h.id === activeMenuHabit.id) < habits.length - 1 ? (
-              <RipplePressable
-                onPress={() => {
-                  const id = activeMenuHabit.id;
-                  setMenuHabitId(null);
-                  handleMoveByOffset(id, 1);
-                }}
-                style={styles.menuRow}>
-                <AppIcon name="arrowDown" size="xs" color={colors.muted} />
-                <Text style={[styles.menuRowText, { color: colors.text }]}>Опустить ниже</Text>
-              </RipplePressable>
-            ) : null}
-
-            <View style={[styles.menuDivider, { backgroundColor: colors.line }]} />
-
-            <RipplePressable
-              onPress={() => {
-                const id = activeMenuHabit.id;
-                setMenuHabitId(null);
-                handleDeleteHabit(id);
-              }}
-              style={styles.menuRow}>
-              <AppIcon name="trash" size="xs" color={colors.danger} />
-              <Text style={[styles.menuRowText, { color: colors.danger }]}>Удалить</Text>
-            </RipplePressable>
-          </View>
-        ) : null}
-      </AnchoredPopover>
 
       <HabitDialog
         visible={dialog.open}
@@ -868,7 +791,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 10,
     minHeight: 40,
-    marginBottom: 14,
+    marginBottom: 12,
   },
   toolbarLeft: {
     flexDirection: 'row',
@@ -911,28 +834,6 @@ const styles = StyleSheet.create({
   todayBtnText: {
     fontSize: 12,
     fontWeight: '600',
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginLeft: 4,
-  },
-  summaryMeta: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  streakChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 999,
-  },
-  streakChipText: {
-    fontSize: 11,
-    fontWeight: '700',
   },
   toolbarRight: {
     flexDirection: 'row',
@@ -997,6 +898,68 @@ const styles = StyleSheet.create({
     maxWidth: 960,
     gap: 12,
   },
+  summaryCard: {
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 10,
+  },
+  summaryTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  summaryMetrics: {
+    flex: 1,
+    minWidth: 160,
+  },
+  summaryTodayGroup: {
+    gap: 3,
+  },
+  summaryPrimary: {
+    fontSize: 14.5,
+    fontWeight: '700',
+  },
+  summarySecondaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  metricPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  metricText: {
+    fontSize: 12,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  metricDot: {
+    fontSize: 12,
+  },
+  remainingChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  remainingChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  summaryBarTrack: {
+    height: 5,
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  summaryBarFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
   emptyCard: {
     borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
@@ -1022,6 +985,17 @@ const styles = StyleSheet.create({
     maxWidth: 360,
     lineHeight: 19,
   },
+  showAllBtn: {
+    marginTop: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 9,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  showAllText: {
+    fontSize: 12.5,
+    fontWeight: '600',
+  },
   gridCard: {
     borderRadius: 15,
     borderWidth: StyleSheet.hairlineWidth,
@@ -1041,13 +1015,16 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.45,
   },
-  nameColDesktop: {
-    width: 220,
+  desktopHeaderNameCol: {
+    width: 232,
     flexShrink: 0,
   },
-  nameColMobile: {
-    width: 112,
-    flexShrink: 0,
+  desktopHeaderStatsCol: {
+    width: 76,
+    alignItems: 'flex-end',
+  },
+  menuSpacer: {
+    width: 28,
   },
   daysRow: {
     flex: 1,
@@ -1063,7 +1040,8 @@ const styles = StyleSheet.create({
   },
   weekdayText: {
     fontSize: 10,
-    fontWeight: '600',
+    fontWeight: '700',
+    textTransform: 'uppercase',
   },
   dayNumBadge: {
     width: 22,
@@ -1077,118 +1055,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
-  statsCol: {
-    width: 74,
-    alignItems: 'flex-end',
-    gap: 1,
-  },
-  menuSpacer: {
-    width: 28,
-    alignItems: 'flex-end',
-  },
-  rowWrap: {
-    position: 'relative',
-  },
-  dragging: {
-    opacity: 0.35,
-  },
-  dropLine: {
-    position: 'absolute',
-    left: 10,
-    right: 10,
-    height: 2.5,
-    borderRadius: 2,
-    backgroundColor: DROP_BLUE,
-    zIndex: 10,
-  },
-  dropBefore: {
-    top: -1,
-  },
-  dropAfter: {
-    bottom: -1,
-  },
-  habitRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    gap: 8,
-  },
-  rowWebDrag: {
-    ...(Platform.OS === 'web'
-      ? ({
-          cursor: 'grab',
-          userSelect: 'none',
-        } as object)
-      : null),
-  },
-  habitIdentity: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    minWidth: 0,
-  },
-  gripIcon: {
-    opacity: 0.35,
-    marginLeft: -4,
-  },
-  habitIconBox: {
-    width: 26,
-    height: 26,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  habitTexts: {
-    flex: 1,
-    minWidth: 0,
-    gap: 1,
-  },
-  habitTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  mobileStreakSub: {
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  dayCellWrap: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  checkCell: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  futureCell: {
-    opacity: 0.28,
-  },
-  streakInline: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-  },
-  streakNum: {
-    fontSize: 13,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-  },
-  goalRatio: {
-    fontSize: 10,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
-  },
-  moreBtn: {
-    width: 26,
-    height: 26,
-    borderRadius: 7,
-    alignItems: 'center',
-    justifyContent: 'center',
+  mobileCardsList: {
+    gap: 10,
   },
   quickAddBar: {
     flexDirection: 'row',
@@ -1212,27 +1080,6 @@ const styles = StyleSheet.create({
     borderRadius: 9,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  popoverBody: {
-    gap: 2,
-  },
-  menuRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 9,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  menuRowText: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  menuDivider: {
-    height: StyleSheet.hairlineWidth,
-    marginVertical: 3,
-    marginHorizontal: 6,
   },
   disabled: {
     opacity: 0.35,

@@ -20,15 +20,15 @@ import {
 } from "react-native";
 
 import {
-  AnchoredPopover,
-  type AnchorRect,
-  measureAnchor,
-} from '@/components/anchored-popover';
-import { AppIcon } from '@/components/app-icon';
-import { DragTrashZone } from '@/components/drag-trash-zone';
+    AnchoredPopover,
+    type AnchorRect,
+    measureAnchor,
+} from "@/components/anchored-popover";
+import { AppIcon } from "@/components/app-icon";
+import { DragTrashZone } from "@/components/drag-trash-zone";
 import { RipplePressable } from "@/components/ripple-pressable";
-import { HistoryToast, UndoRedoButtons } from '@/components/undo-redo-bar';
-import { WebDragBox } from '@/components/web-drag-box';
+import { HistoryToast, UndoRedoButtons } from "@/components/undo-redo-bar";
+import { WebDragBox } from "@/components/web-drag-box";
 import { createId, nowIso } from "@/db/client";
 import { useDatabase } from "@/db/provider";
 import { useAuth } from "@/features/auth/auth-context";
@@ -66,7 +66,7 @@ import {
     type PageCoverKey,
 } from "@/features/notes/types";
 import { useResolvedColorScheme } from "@/hooks/use-resolved-color-scheme";
-import { useUndoRedoHotkeys } from '@/hooks/use-undo-redo';
+import { useUndoRedoHotkeys } from "@/hooks/use-undo-redo";
 import { useThemeColors, useViewport } from "@/theme/colors";
 
 const COVER_KEYS: readonly PageCoverKey[] = [
@@ -168,15 +168,26 @@ export function NotesWorkspace() {
   } | null>(null);
 
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
-  const [iconPickerAnchor, setIconPickerAnchor] = useState<AnchorRect | null>(null);
+  const [iconPickerAnchor, setIconPickerAnchor] = useState<AnchorRect | null>(
+    null,
+  );
   const [coverPickerOpen, setCoverPickerOpen] = useState(false);
-  const [coverPickerAnchor, setCoverPickerAnchor] = useState<AnchorRect | null>(null);
-  const [coverPickerAlign, setCoverPickerAlign] = useState<'left' | 'right'>('left');
+  const [coverPickerAnchor, setCoverPickerAnchor] = useState<AnchorRect | null>(
+    null,
+  );
+  const [coverPickerAlign, setCoverPickerAlign] = useState<"left" | "right">(
+    "left",
+  );
   const [pageOptionsOpen, setPageOptionsOpen] = useState(false);
-  const [pageOptionsAnchor, setPageOptionsAnchor] = useState<AnchorRect | null>(null);
+  const [pageOptionsAnchor, setPageOptionsAnchor] = useState<AnchorRect | null>(
+    null,
+  );
   const [confirmDeletePage, setConfirmDeletePage] = useState(false);
   const [saveState, setSaveState] = useState<"saved" | "saving">("saved");
-  const [historyMeta, setHistoryMeta] = useState({ canUndo: false, canRedo: false });
+  const [historyMeta, setHistoryMeta] = useState({
+    canUndo: false,
+    canRedo: false,
+  });
   const [historyToast, setHistoryToast] = useState<string | null>(null);
 
   const pageOptionsBtnRef = useRef<ComponentRef<typeof View>>(null);
@@ -186,9 +197,11 @@ export function NotesWorkspace() {
   const historyByPageRef = useRef<
     Map<string, { past: NoteBlockRecord[][]; future: NoteBlockRecord[][] }>
   >(new Map());
-  const typingBurstRef = useRef<{ pageId: string; blockId: string | null; ts: number } | null>(
-    null,
-  );
+  const typingBurstRef = useRef<{
+    pageId: string;
+    blockId: string | null;
+    ts: number;
+  } | null>(null);
   const blocksRef = useRef<NoteBlockRecord[]>([]);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -229,7 +242,7 @@ export function NotesWorkspace() {
 
   function openCoverPickerFrom(
     ref: { current: ComponentRef<typeof View> | null },
-    align: 'left' | 'right' = 'left',
+    align: "left" | "right" = "left",
   ) {
     measureAnchor(ref.current, (rect) => {
       setCoverPickerAlign(align);
@@ -536,7 +549,11 @@ export function NotesWorkspace() {
 
   function mutateBlocks(
     updater: (prev: NoteBlockRecord[]) => NoteBlockRecord[],
-    options?: { immediate?: boolean; focusId?: string | null; skipHistory?: boolean },
+    options?: {
+      immediate?: boolean;
+      focusId?: string | null;
+      skipHistory?: boolean;
+    },
   ) {
     if (!activePageId) {
       return;
@@ -600,8 +617,11 @@ export function NotesWorkspace() {
     typingBurstRef.current = null;
     setBlocks(previous);
     scheduleBlocksSave(activePageId, previous, true);
-    setHistoryMeta({ canUndo: entry.past.length > 0, canRedo: entry.future.length > 0 });
-    showHistoryToast('Отменено');
+    setHistoryMeta({
+      canUndo: entry.past.length > 0,
+      canRedo: entry.future.length > 0,
+    });
+    showHistoryToast("Отменено");
   }, [activePageId, scheduleBlocksSave, showHistoryToast]);
 
   const handleRedoBlocks = useCallback(() => {
@@ -617,15 +637,19 @@ export function NotesWorkspace() {
     typingBurstRef.current = null;
     setBlocks(next);
     scheduleBlocksSave(activePageId, next, true);
-    setHistoryMeta({ canUndo: entry.past.length > 0, canRedo: entry.future.length > 0 });
-    showHistoryToast('Возвращено');
+    setHistoryMeta({
+      canUndo: entry.past.length > 0,
+      canRedo: entry.future.length > 0,
+    });
+    showHistoryToast("Возвращено");
   }, [activePageId, scheduleBlocksSave, showHistoryToast]);
 
   useUndoRedoHotkeys({
     enabled: !quickFindOpen && Boolean(activePageId),
     ignoreInsideInputs: false,
     shouldIgnoreTarget: (target) =>
-      typeof HTMLInputElement !== 'undefined' && target instanceof HTMLInputElement,
+      typeof HTMLInputElement !== "undefined" &&
+      target instanceof HTMLInputElement,
     onUndo: handleUndoBlocks,
     onRedo: handleRedoBlocks,
   });
@@ -1154,7 +1178,8 @@ export function NotesWorkspace() {
                     style={StyleSheet.flatten([
                       styles.topIconBtn,
                       { backgroundColor: colors.surfaceSubtle },
-                    ])}>
+                    ])}
+                  >
                     <AppIcon name="sidebar" size="sm" color={colors.text} />
                   </RipplePressable>
                 ) : (
@@ -1166,9 +1191,12 @@ export function NotesWorkspace() {
                     style={StyleSheet.flatten([
                       styles.backBtn,
                       { backgroundColor: colors.surfaceSubtle },
-                    ])}>
+                    ])}
+                  >
                     <AppIcon name="arrowLeft" size="xs" color={colors.text} />
-                    <Text style={[styles.backBtnText, { color: colors.text }]}>Страницы</Text>
+                    <Text style={[styles.backBtnText, { color: colors.text }]}>
+                      Страницы
+                    </Text>
                   </RipplePressable>
                 )}
 
@@ -1241,9 +1269,14 @@ export function NotesWorkspace() {
                       <Text
                         style={[
                           styles.reorderToggleText,
-                          { color: mobileReorderMode ? colors.accentText : colors.text },
-                        ]}>
-                        {mobileReorderMode ? 'Готово' : 'Порядок'}
+                          {
+                            color: mobileReorderMode
+                              ? colors.accentText
+                              : colors.text,
+                          },
+                        ]}
+                      >
+                        {mobileReorderMode ? "Готово" : "Порядок"}
                       </Text>
                     </View>
                   </RipplePressable>
@@ -1258,7 +1291,12 @@ export function NotesWorkspace() {
                   onRedo={handleRedoBlocks}
                 />
 
-                <View style={[styles.topBarDivider, { backgroundColor: colors.line }]} />
+                <View
+                  style={[
+                    styles.topBarDivider,
+                    { backgroundColor: colors.line },
+                  ]}
+                />
 
                 <RipplePressable
                   accessibilityLabel="Быстрый поиск"
@@ -1266,7 +1304,8 @@ export function NotesWorkspace() {
                   style={StyleSheet.flatten([
                     styles.topIconBtn,
                     { backgroundColor: colors.surfaceSubtle },
-                  ])}>
+                  ])}
+                >
                   <AppIcon name="search" size="sm" color={colors.muted} />
                 </RipplePressable>
 
@@ -1289,8 +1328,10 @@ export function NotesWorkspace() {
                   <AppIcon
                     name="star"
                     size="sm"
-                    color={activePage.isFavorite ? colors.warning : colors.muted}
-                    fill={activePage.isFavorite ? colors.warning : 'none'}
+                    color={
+                      activePage.isFavorite ? colors.warning : colors.muted
+                    }
+                    fill={activePage.isFavorite ? colors.warning : "none"}
                   />
                 </RipplePressable>
 
@@ -1315,7 +1356,8 @@ export function NotesWorkspace() {
                           ? colors.surfaceActive
                           : colors.surfaceSubtle,
                       },
-                    ])}>
+                    ])}
+                  >
                     <AppIcon name="more" size="sm" color={colors.text} />
                   </RipplePressable>
                 </View>
@@ -1340,7 +1382,9 @@ export function NotesWorkspace() {
                   <View style={styles.coverControls}>
                     <View ref={coverBtnRef} collapsable={false}>
                       <RipplePressable
-                        onPress={() => openCoverPickerFrom(coverBtnRef, 'right')}
+                        onPress={() =>
+                          openCoverPickerFrom(coverBtnRef, "right")
+                        }
                         style={StyleSheet.flatten([
                           styles.coverBtn,
                           { backgroundColor: colors.surface },
@@ -1426,10 +1470,22 @@ export function NotesWorkspace() {
                       {!activePage.coverColor ? (
                         <View ref={addCoverChipRef} collapsable={false}>
                           <RipplePressable
-                            onPress={() => openCoverPickerFrom(addCoverChipRef, 'left')}
-                            style={styles.headerGhostChip}>
-                            <AppIcon name="cover" size="xs" color={colors.muted} />
-                            <Text style={[styles.headerGhostText, { color: colors.muted }]}>
+                            onPress={() =>
+                              openCoverPickerFrom(addCoverChipRef, "left")
+                            }
+                            style={styles.headerGhostChip}
+                          >
+                            <AppIcon
+                              name="cover"
+                              size="xs"
+                              color={colors.muted}
+                            />
+                            <Text
+                              style={[
+                                styles.headerGhostText,
+                                { color: colors.muted },
+                              ]}
+                            >
                               Добавить обложку
                             </Text>
                           </RipplePressable>
@@ -1438,9 +1494,19 @@ export function NotesWorkspace() {
 
                       <RipplePressable
                         onPress={() => handleCreatePage(activePage.id)}
-                        style={styles.headerGhostChip}>
-                        <AppIcon name="filePlus" size="xs" color={colors.muted} />
-                        <Text style={[styles.headerGhostText, { color: colors.muted }]}>
+                        style={styles.headerGhostChip}
+                      >
+                        <AppIcon
+                          name="filePlus"
+                          size="xs"
+                          color={colors.muted}
+                        />
+                        <Text
+                          style={[
+                            styles.headerGhostText,
+                            { color: colors.muted },
+                          ]}
+                        >
                           Подстраница
                         </Text>
                       </RipplePressable>
@@ -1611,14 +1677,14 @@ export function NotesWorkspace() {
                     if (!draggingBlockId || blocks.length === 0) return;
                     event.preventDefault();
                     if (event.dataTransfer) {
-                      event.dataTransfer.dropEffect = 'move';
+                      event.dataTransfer.dropEffect = "move";
                     }
                     const lastId = blocks[blocks.length - 1].id;
                     if (lastId !== draggingBlockId) {
                       setDropTarget((prev) =>
-                        prev?.blockId === lastId && prev.position === 'after'
+                        prev?.blockId === lastId && prev.position === "after"
                           ? prev
-                          : { blockId: lastId, position: 'after' },
+                          : { blockId: lastId, position: "after" },
                       );
                     }
                   }}
@@ -1626,17 +1692,18 @@ export function NotesWorkspace() {
                     if (!draggingBlockId || blocks.length === 0) return;
                     event.preventDefault();
                     const draggedId =
-                      event.dataTransfer?.getData('text/sotaq-note-block') ||
-                      event.dataTransfer?.getData('text/plain') ||
+                      event.dataTransfer?.getData("text/sotaq-note-block") ||
+                      event.dataTransfer?.getData("text/plain") ||
                       draggingBlockId;
                     const lastId = blocks[blocks.length - 1].id;
                     if (draggedId && draggedId !== lastId) {
-                      handleDropOnBlock(draggedId, lastId, 'after');
+                      handleDropOnBlock(draggedId, lastId, "after");
                     } else {
                       setDraggingBlockId(null);
                       setDropTarget(null);
                     }
-                  }}>
+                  }}
+                >
                   <Pressable
                     onPress={() => {
                       closeAllMenus();
@@ -1704,7 +1771,11 @@ export function NotesWorkspace() {
                           >
                             {child.title.trim() || "Без названия"}
                           </Text>
-                          <AppIcon name="arrowRight" size="xs" color={colors.muted} />
+                          <AppIcon
+                            name="arrowRight"
+                            size="xs"
+                            color={colors.muted}
+                          />
                         </RipplePressable>
                       ))}
                     </View>
@@ -1766,7 +1837,8 @@ export function NotesWorkspace() {
                     style={StyleSheet.flatten([
                       styles.pinnedToolBtn,
                       { backgroundColor: colors.accent },
-                    ])}>
+                    ])}
+                  >
                     <AppIcon name="plus" size="md" color={colors.accentText} />
                   </RipplePressable>
 
@@ -1783,7 +1855,8 @@ export function NotesWorkspace() {
                     style={StyleSheet.flatten([
                       styles.pinnedToolBtn,
                       { backgroundColor: colors.surfaceSubtle },
-                    ])}>
+                    ])}
+                  >
                     <AppIcon name="grip" size="md" color={colors.text} />
                   </RipplePressable>
 
@@ -1802,17 +1875,29 @@ export function NotesWorkspace() {
                           style={StyleSheet.flatten([
                             styles.toolChip,
                             { backgroundColor: colors.surfaceSubtle },
-                            focusedBlock.indentLevel <= 0 ? styles.disabledChip : null,
-                          ])}>
-                          <AppIcon name="outdent" size="sm" color={colors.text} />
+                            focusedBlock.indentLevel <= 0
+                              ? styles.disabledChip
+                              : null,
+                          ])}
+                        >
+                          <AppIcon
+                            name="outdent"
+                            size="sm"
+                            color={colors.text}
+                          />
                         </RipplePressable>
                         <RipplePressable
                           onPress={() => handleIndent(focusedBlock.id, 1)}
                           style={StyleSheet.flatten([
                             styles.toolChip,
                             { backgroundColor: colors.surfaceSubtle },
-                          ])}>
-                          <AppIcon name="indent" size="sm" color={colors.text} />
+                          ])}
+                        >
+                          <AppIcon
+                            name="indent"
+                            size="sm"
+                            color={colors.text}
+                          />
                         </RipplePressable>
                         <RipplePressable
                           disabled={focusedBlockIndex <= 0}
@@ -1821,8 +1906,13 @@ export function NotesWorkspace() {
                             styles.toolChip,
                             { backgroundColor: colors.surfaceSubtle },
                             focusedBlockIndex <= 0 ? styles.disabledChip : null,
-                          ])}>
-                          <AppIcon name="arrowUp" size="sm" color={colors.text} />
+                          ])}
+                        >
+                          <AppIcon
+                            name="arrowUp"
+                            size="sm"
+                            color={colors.text}
+                          />
                         </RipplePressable>
                         <RipplePressable
                           disabled={focusedBlockIndex >= blocks.length - 1}
@@ -1830,9 +1920,16 @@ export function NotesWorkspace() {
                           style={StyleSheet.flatten([
                             styles.toolChip,
                             { backgroundColor: colors.surfaceSubtle },
-                            focusedBlockIndex >= blocks.length - 1 ? styles.disabledChip : null,
-                          ])}>
-                          <AppIcon name="arrowDown" size="sm" color={colors.text} />
+                            focusedBlockIndex >= blocks.length - 1
+                              ? styles.disabledChip
+                              : null,
+                          ])}
+                        >
+                          <AppIcon
+                            name="arrowDown"
+                            size="sm"
+                            color={colors.text}
+                          />
                         </RipplePressable>
                       </>
                     ) : null}
@@ -1880,8 +1977,13 @@ export function NotesWorkspace() {
                     style={StyleSheet.flatten([
                       styles.pinnedToolBtn,
                       { backgroundColor: colors.surfaceSubtle },
-                    ])}>
-                    <AppIcon name="keyboardOff" size="sm" color={colors.muted} />
+                    ])}
+                  >
+                    <AppIcon
+                      name="keyboardOff"
+                      size="sm"
+                      color={colors.muted}
+                    />
                   </RipplePressable>
                 </View>
               )
@@ -1961,7 +2063,8 @@ export function NotesWorkspace() {
         onClose={() => {
           setPageOptionsOpen(false);
           setConfirmDeletePage(false);
-        }}>
+        }}
+      >
         {activePage ? (
           <View style={styles.popoverList}>
             {isDesktop ? (
@@ -1975,14 +2078,17 @@ export function NotesWorkspace() {
                 style={({ hovered }: { hovered?: boolean }) => [
                   styles.optionRow,
                   hovered ? { backgroundColor: colors.surfaceSubtle } : null,
-                ]}>
+                ]}
+              >
                 <AppIcon
-                  name={activePage.fullWidth ? 'minimize' : 'maximize'}
+                  name={activePage.fullWidth ? "minimize" : "maximize"}
                   size="xs"
                   color={colors.muted}
                 />
                 <Text style={[styles.optionLabel, { color: colors.text }]}>
-                  {activePage.fullWidth ? 'Обычная ширина (708px)' : 'Во всю ширину'}
+                  {activePage.fullWidth
+                    ? "Обычная ширина (708px)"
+                    : "Во всю ширину"}
                 </Text>
               </Pressable>
             ) : null}
@@ -1990,15 +2096,18 @@ export function NotesWorkspace() {
             <Pressable
               onPress={() => {
                 setPageOptionsOpen(false);
-                openCoverPickerFrom(pageOptionsBtnRef, 'right');
+                openCoverPickerFrom(pageOptionsBtnRef, "right");
               }}
               style={({ hovered }: { hovered?: boolean }) => [
                 styles.optionRow,
                 hovered ? { backgroundColor: colors.surfaceSubtle } : null,
-              ]}>
+              ]}
+            >
               <AppIcon name="cover" size="xs" color={colors.muted} />
               <Text style={[styles.optionLabel, { color: colors.text }]}>
-                {activePage.coverColor ? 'Изменить обложку' : 'Добавить обложку'}
+                {activePage.coverColor
+                  ? "Изменить обложку"
+                  : "Добавить обложку"}
               </Text>
             </Pressable>
 
@@ -2010,7 +2119,8 @@ export function NotesWorkspace() {
               style={({ hovered }: { hovered?: boolean }) => [
                 styles.optionRow,
                 hovered ? { backgroundColor: colors.surfaceSubtle } : null,
-              ]}>
+              ]}
+            >
               <AppIcon name="filePlus" size="xs" color={colors.muted} />
               <Text style={[styles.optionLabel, { color: colors.text }]}>
                 Добавить подстраницу
@@ -2025,7 +2135,8 @@ export function NotesWorkspace() {
               style={({ hovered }: { hovered?: boolean }) => [
                 styles.optionRow,
                 hovered ? { backgroundColor: colors.surfaceSubtle } : null,
-              ]}>
+              ]}
+            >
               <AppIcon name="copy" size="xs" color={colors.muted} />
               <Text style={[styles.optionLabel, { color: colors.text }]}>
                 Дублировать страницу
@@ -2043,10 +2154,13 @@ export function NotesWorkspace() {
               style={({ hovered }: { hovered?: boolean }) => [
                 styles.optionRow,
                 hovered ? { backgroundColor: colors.dangerBg } : null,
-              ]}>
+              ]}
+            >
               <AppIcon name="trash" size="xs" color={colors.danger} />
               <Text style={[styles.optionLabel, { color: colors.danger }]}>
-                {confirmDeletePage ? 'Точно удалить страницу?' : 'Удалить страницу'}
+                {confirmDeletePage
+                  ? "Точно удалить страницу?"
+                  : "Удалить страницу"}
               </Text>
             </Pressable>
           </View>
@@ -2061,7 +2175,8 @@ export function NotesWorkspace() {
         estimatedHeight={128}
         align={coverPickerAlign}
         colors={colors}
-        onClose={() => setCoverPickerOpen(false)}>
+        onClose={() => setCoverPickerOpen(false)}
+      >
         {activePage ? (
           <View style={styles.pickerGrid}>
             {COVER_KEYS.map((key) => {
@@ -2081,7 +2196,8 @@ export function NotesWorkspace() {
                         scheme === "dark" ? preset.dark : preset.light,
                       borderColor: selected ? colors.text : colors.line,
                     },
-                  ])}>
+                  ])}
+                >
                   <Text style={[styles.coverChipText, { color: colors.text }]}>
                     {preset.label}
                   </Text>
@@ -2100,7 +2216,8 @@ export function NotesWorkspace() {
         estimatedHeight={152}
         align="left"
         colors={colors}
-        onClose={() => setIconPickerOpen(false)}>
+        onClose={() => setIconPickerOpen(false)}
+      >
         {activePage ? (
           <View style={styles.pickerGrid}>
             {PAGE_ICONS.map((emoji) => (
@@ -2115,7 +2232,8 @@ export function NotesWorkspace() {
                   activePage.icon === emoji
                     ? { backgroundColor: colors.surfaceActive }
                     : null,
-                ])}>
+                ])}
+              >
                 <Text style={styles.emojiGlyph}>{emoji}</Text>
               </RipplePressable>
             ))}
@@ -2129,8 +2247,8 @@ export function NotesWorkspace() {
         colors={colors}
         onDropDelete={(event) => {
           const blockId =
-            event.dataTransfer?.getData('text/sotaq-note-block') ||
-            event.dataTransfer?.getData('text/plain') ||
+            event.dataTransfer?.getData("text/sotaq-note-block") ||
+            event.dataTransfer?.getData("text/plain") ||
             draggingBlockId;
           setDraggingBlockId(null);
           setDropTarget(null);
@@ -2213,7 +2331,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   backBtn: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 5,
     paddingHorizontal: 10,
     height: 30,
@@ -2222,8 +2340,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   inlineIconRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 5,
   },
   backBtnText: {
@@ -2262,14 +2380,17 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   optionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 9,
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 8,
-    ...(Platform.OS === 'web'
-      ? ({ cursor: 'pointer', transition: 'background-color 110ms ease' } as object)
+    ...(Platform.OS === "web"
+      ? ({
+          cursor: "pointer",
+          transition: "background-color 110ms ease",
+        } as object)
       : null),
   },
   optionLabel: {
@@ -2403,8 +2524,8 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
   },
   headerGhostChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 6,
     paddingHorizontal: 8,
     paddingVertical: 4,

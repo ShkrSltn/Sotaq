@@ -19,6 +19,7 @@ export const CONTROLLABLE_FEATURE_KEYS: readonly ControllableFeatureKey[] = [
   'kanban',
   'todos',
   'habits',
+  'focus',
   'notes',
   'language',
 ] as const;

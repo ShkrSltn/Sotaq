@@ -44,6 +44,9 @@ function ProtectedNavigator() {
           <Stack.Protected guard={canAccess('habits')}>
             <Stack.Screen name="habits" />
           </Stack.Protected>
+          <Stack.Protected guard={canAccess('focus')}>
+            <Stack.Screen name="focus" />
+          </Stack.Protected>
           <Stack.Protected guard={canAccess('notes')}>
             <Stack.Screen name="notes" />
           </Stack.Protected>

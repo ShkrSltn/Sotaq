@@ -30,6 +30,7 @@ const EMPTY_FEATURES: FeatureAccessMap = {
   kanban: false,
   todos: false,
   habits: false,
+  focus: false,
   notes: false,
   language: false,
   admin: false,

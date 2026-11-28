@@ -234,6 +234,7 @@ export async function getRoleFeatureMatrix(db: SQLiteDatabase): Promise<RoleFeat
       kanban: true,
       todos: true,
       habits: true,
+      focus: true,
       notes: true,
       language: true,
     },
@@ -242,6 +243,7 @@ export async function getRoleFeatureMatrix(db: SQLiteDatabase): Promise<RoleFeat
       kanban: true,
       todos: true,
       habits: true,
+      focus: true,
       notes: true,
       language: true,
     },
@@ -336,6 +338,7 @@ export async function computeEffectiveFeatures(
     kanban: overrides.kanban ?? roleFeatures.kanban,
     todos: overrides.todos ?? roleFeatures.todos,
     habits: overrides.habits ?? roleFeatures.habits,
+    focus: overrides.focus ?? roleFeatures.focus,
     notes: overrides.notes ?? roleFeatures.notes,
     language: overrides.language ?? roleFeatures.language,
   };
@@ -507,6 +510,7 @@ export async function deleteUserByAdmin(
     await db.runAsync('DELETE FROM languages WHERE user_id = ?;', targetUserId);
     await db.runAsync('DELETE FROM habits WHERE user_id = ?;', targetUserId);
     await db.runAsync('DELETE FROM focus_sessions WHERE user_id = ?;', targetUserId);
+    await db.runAsync('DELETE FROM focus_settings WHERE user_id = ?;', targetUserId);
     await db.runAsync('DELETE FROM users WHERE id = ?;', targetUserId);
   });
 }

@@ -104,6 +104,7 @@ function UserEditorModalContent(props: UserEditorModalProps) {
       kanban: toOverrideState(initial.kanban),
       todos: toOverrideState(initial.todos),
       habits: toOverrideState(initial.habits),
+      focus: toOverrideState(initial.focus),
       notes: toOverrideState(initial.notes),
       language: toOverrideState(initial.language),
     };

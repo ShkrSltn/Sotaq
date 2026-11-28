@@ -8,6 +8,7 @@ import { RipplePressable } from '@/components/ripple-pressable';
 import { useDatabaseState } from '@/db/provider';
 import { useAuth } from '@/features/auth/auth-context';
 import {
+  FocusAbandonGuardModal,
   FocusMobileTrigger,
   FocusSidebarWidget,
 } from '@/features/focus/components/focus-widget';
@@ -19,7 +20,7 @@ import {
 } from '@/features/registry';
 import { useThemeColors, useViewport } from '@/theme/colors';
 
-const MAX_MOBILE_BAR_ITEMS = 4;
+const MAX_MOBILE_BAR_ITEMS = 5;
 
 export function AppShell({ children }: { children: ReactNode }) {
   const colors = useThemeColors();
@@ -169,6 +170,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </View>
 
         <View style={styles.desktopMain}>{children}</View>
+        <FocusAbandonGuardModal />
       </View>
     );
   }
@@ -198,21 +200,6 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <View style={styles.mobileHeaderRight}>
           <FocusMobileTrigger />
-          <View style={[styles.dbChip, { backgroundColor: colors.surfaceSubtle }]}>
-            <View style={[styles.statusDot, { backgroundColor: colors.success }]} />
-            <Text style={[styles.dbChipText, { color: colors.text }]} numberOfLines={1}>
-              @{user.username}
-            </Text>
-          </View>
-          <RipplePressable
-            accessibilityLabel="Выйти"
-            onPress={logout}
-            style={StyleSheet.flatten([
-              styles.mobileLogoutBtn,
-              { backgroundColor: colors.surfaceSubtle },
-            ])}>
-            <AppIcon name="logout" size="sm" color={colors.muted} />
-          </RipplePressable>
         </View>
       </View>
 
@@ -278,19 +265,71 @@ export function AppShell({ children }: { children: ReactNode }) {
                 paddingBottom: Math.max(insets.bottom, 16),
               },
             ]}>
-            <Text style={[styles.moreTitle, { color: colors.text }]}>Другие разделы</Text>
-            {overflowTabs.map((feature) => (
-              <RipplePressable
-                key={feature.key}
-                onPress={() => navigateTo(feature)}
-                style={styles.navItem}>
-                <AppIcon name={feature.icon} size="md" color={colors.text} />
-                <Text style={[styles.navLabel, { color: colors.text }]}>{feature.title}</Text>
-              </RipplePressable>
-            ))}
+            <Text style={[styles.moreTitle, { color: colors.text }]}>Ещё разделы</Text>
+            {overflowTabs.map((feature) => {
+              const active = isActiveRoute(feature);
+              return (
+                <RipplePressable
+                  key={feature.key}
+                  onPress={() => navigateTo(feature)}
+                  style={StyleSheet.flatten([
+                    styles.navItem,
+                    active ? { backgroundColor: colors.surfaceActive } : null,
+                  ])}>
+                  <AppIcon
+                    name={feature.icon}
+                    size="md"
+                    color={active ? colors.text : colors.muted}
+                  />
+                  <Text
+                    style={[
+                      styles.navLabel,
+                      { color: active ? colors.text : colors.muted },
+                    ]}>
+                    {feature.title}
+                  </Text>
+                  {active ? <AppIcon name="check" size="xs" color={colors.text} /> : null}
+                </RipplePressable>
+              );
+            })}
+
+            <View style={[styles.moreProfileBlock, { borderTopColor: colors.line }]}>
+              <View style={styles.profileRow}>
+                <View style={styles.profileInfo}>
+                  <View style={styles.profileNameRow}>
+                    <Text style={[styles.profileName, { color: colors.text }]} numberOfLines={1}>
+                      {user.displayName}
+                    </Text>
+                    <View style={[styles.roleBadge, { backgroundColor: colors.surfaceSubtle }]}>
+                      <Text style={[styles.roleBadgeText, { color: colors.muted }]}>
+                        {user.role === 'admin' ? 'Admin' : 'User'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={[styles.profileHandle, { color: colors.muted }]} numberOfLines={1}>
+                    @{user.username} · SQLite v{schemaVersion}
+                  </Text>
+                </View>
+
+                <RipplePressable
+                  accessibilityLabel="Выйти из аккаунта"
+                  onPress={() => {
+                    setMoreOpen(false);
+                    logout();
+                  }}
+                  style={StyleSheet.flatten([
+                    styles.moreLogoutBtn,
+                    { backgroundColor: colors.surfaceSubtle },
+                  ])}>
+                  <AppIcon name="logout" size="xs" color={colors.muted} />
+                  <Text style={[styles.moreLogoutText, { color: colors.text }]}>Выйти</Text>
+                </RipplePressable>
+              </View>
+            </View>
           </View>
         </Pressable>
       </Modal>
+      <FocusAbandonGuardModal />
     </View>
   );
 }
@@ -528,5 +567,23 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     paddingHorizontal: 10,
     paddingBottom: 6,
+  },
+  moreProfileBlock: {
+    marginTop: 8,
+    paddingTop: 12,
+    paddingHorizontal: 6,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  moreLogoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 9,
+  },
+  moreLogoutText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

@@ -8,6 +8,7 @@ export type FeatureKey =
   | 'kanban'
   | 'todos'
   | 'habits'
+  | 'focus'
   | 'notes'
   | 'language'
   | 'admin';
@@ -52,17 +53,6 @@ export const FEATURES: readonly FeatureDefinition[] = [
     showInMobileBar: true,
   },
   {
-    key: 'kanban',
-    title: 'Доска',
-    shortTitle: 'Доска',
-    description: 'Канбан для задач и проектов',
-    icon: 'kanban',
-    route: '/board',
-    status: 'active',
-    defaultUserEnabled: true,
-    showInMobileBar: true,
-  },
-  {
     key: 'todos',
     title: 'Список задач',
     shortTitle: 'Задачи',
@@ -74,12 +64,34 @@ export const FEATURES: readonly FeatureDefinition[] = [
     showInMobileBar: true,
   },
   {
+    key: 'kanban',
+    title: 'Доска',
+    shortTitle: 'Доска',
+    description: 'Канбан для задач и проектов',
+    icon: 'kanban',
+    route: '/board',
+    status: 'active',
+    defaultUserEnabled: true,
+    showInMobileBar: true,
+  },
+  {
     key: 'habits',
     title: 'Привычки',
     shortTitle: 'Привычки',
     description: 'Минималистичный трекер привычек по дням и серии',
     icon: 'flame',
     route: '/habits' as Href,
+    status: 'active',
+    defaultUserEnabled: true,
+    showInMobileBar: true,
+  },
+  {
+    key: 'focus',
+    title: 'Фокус',
+    shortTitle: 'Фокус',
+    description: 'Помодоро-таймер, графики концентрации и индекс дисциплины',
+    icon: 'timer',
+    route: '/focus' as Href,
     status: 'active',
     defaultUserEnabled: true,
     showInMobileBar: true,

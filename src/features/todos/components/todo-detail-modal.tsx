@@ -14,6 +14,7 @@ import {
 import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AppIcon } from '@/components/app-icon';
 import { RipplePressable } from '@/components/ripple-pressable';
 import {
   addDaysDateKey,
@@ -166,13 +167,20 @@ function TodoDetailModalContent({
                   backgroundColor: todo.isDone ? colors.successBg : colors.surfaceSubtle,
                 },
               ])}>
-              <Text
-                style={[
-                  styles.statusBtnLabel,
-                  { color: todo.isDone ? colors.success : colors.text },
-                ]}>
-                {todo.isDone ? '✓ Выполнено' : '○ Отметить готовой'}
-              </Text>
+              <View style={styles.inlineIconRow}>
+                <AppIcon
+                  name={todo.isDone ? 'checkCircle' : 'circle'}
+                  size="sm"
+                  color={todo.isDone ? colors.success : colors.muted}
+                />
+                <Text
+                  style={[
+                    styles.statusBtnLabel,
+                    { color: todo.isDone ? colors.success : colors.text },
+                  ]}>
+                  {todo.isDone ? 'Выполнено' : 'Отметить готовой'}
+                </Text>
+              </View>
             </RipplePressable>
 
             <RipplePressable
@@ -413,12 +421,17 @@ function TodoDetailModalContent({
                       styles.sendBoardBtn,
                       { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
                     ])}>
-                    <Text style={[styles.sendBoardText, { color: colors.text }]}>
-                      ▦ Отправить на доску
-                    </Text>
-                    <Text style={[styles.sendBoardChevron, { color: colors.muted }]}>
-                      {linkPickerOpen ? '▴' : '▾'}
-                    </Text>
+                    <View style={styles.inlineIconRow}>
+                      <AppIcon name="kanban" size="sm" color={colors.text} />
+                      <Text style={[styles.sendBoardText, { color: colors.text }]}>
+                        Отправить на доску
+                      </Text>
+                    </View>
+                    <AppIcon
+                      name={linkPickerOpen ? 'chevronUp' : 'chevronDown'}
+                      size="sm"
+                      color={colors.muted}
+                    />
                   </RipplePressable>
 
                   {linkPickerOpen && selectedBoard ? (
@@ -564,6 +577,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 9,
+  },
+  inlineIconRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
   },
   statusBtnLabel: {
     fontSize: 13,

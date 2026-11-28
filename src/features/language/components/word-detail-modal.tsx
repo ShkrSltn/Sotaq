@@ -14,6 +14,7 @@ import {
 import Animated, { FadeIn, FadeInDown, FadeOut, SlideInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AppIcon } from '@/components/app-icon';
 import { RipplePressable } from '@/components/ripple-pressable';
 import {
   VOCAB_STATUS_META,
@@ -304,9 +305,12 @@ function WordDetailModalContent({
                   {aiGenerating ? (
                     <ActivityIndicator size="small" color={colors.text} />
                   ) : (
-                    <Text style={[styles.aiSmallBtnText, { color: colors.text }]}>
-                      ✦ Примеры от ИИ
-                    </Text>
+                    <View style={styles.aiBtnRow}>
+                      <AppIcon name="sparkles" size="xs" color={colors.text} />
+                      <Text style={[styles.aiSmallBtnText, { color: colors.text }]}>
+                        Примеры от ИИ
+                      </Text>
+                    </View>
                   )}
                 </RipplePressable>
               </View>
@@ -334,7 +338,7 @@ function WordDetailModalContent({
                           accessibilityLabel="Удалить пример"
                           onPress={() => onDeleteExample(ex.id)}
                           style={styles.exampleDel}>
-                          <Text style={[styles.exampleDelGlyph, { color: colors.muted }]}>×</Text>
+                          <AppIcon name="close" size="xs" color={colors.muted} />
                         </RipplePressable>
                       </View>
                       {ex.translation ? (
@@ -543,6 +547,11 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     minHeight: 28,
     justifyContent: 'center',
+  },
+  aiBtnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
   },
   aiSmallBtnText: {
     fontSize: 12,

@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 
+import { AppIcon } from '@/components/app-icon';
 import { RipplePressable } from '@/components/ripple-pressable';
 import { useDatabase } from '@/db/provider';
 import { useAuth } from '@/features/auth/auth-context';
@@ -558,9 +559,12 @@ export function LanguageWorkspace() {
                   {aiBusy === 'word' ? (
                     <ActivityIndicator size="small" color={colors.accentText} />
                   ) : (
-                    <Text style={[styles.primaryBtnText, { color: colors.accentText }]}>
-                      ✦ Изучить с ИИ
-                    </Text>
+                    <View style={styles.btnIconRow}>
+                      <AppIcon name="sparkles" size="sm" color={colors.accentText} />
+                      <Text style={[styles.primaryBtnText, { color: colors.accentText }]}>
+                        Изучить с ИИ
+                      </Text>
+                    </View>
                   )}
                 </RipplePressable>
               </View>
@@ -619,7 +623,7 @@ export function LanguageWorkspace() {
                 />
                 {search.length > 0 ? (
                   <RipplePressable onPress={() => setSearch('')} style={styles.clearBtn}>
-                    <Text style={[styles.clearGlyph, { color: colors.muted }]}>×</Text>
+                    <AppIcon name="close" size="xs" color={colors.muted} />
                   </RipplePressable>
                 ) : null}
               </View>
@@ -692,9 +696,10 @@ export function LanguageWorkspace() {
                           <Text style={[styles.wordMeta, { color: colors.muted }]}>
                             Примеров: {word.examples.length}
                           </Text>
-                          <Text style={[styles.wordMeta, { color: colors.muted }]}>
-                            Открыть →
-                          </Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                            <Text style={[styles.wordMeta, { color: colors.muted }]}>Открыть</Text>
+                            <AppIcon name="arrowRight" size="xs" color={colors.muted} />
+                          </View>
                         </View>
                       </RipplePressable>
                     </Animated.View>
@@ -732,9 +737,12 @@ export function LanguageWorkspace() {
                   {aiBusy === 'sentence' ? (
                     <ActivityIndicator size="small" color={colors.accentText} />
                   ) : (
-                    <Text style={[styles.primaryBtnText, { color: colors.accentText }]}>
-                      ✦ Разобрать с ИИ
-                    </Text>
+                    <View style={styles.btnIconRow}>
+                      <AppIcon name="sparkles" size="sm" color={colors.accentText} />
+                      <Text style={[styles.primaryBtnText, { color: colors.accentText }]}>
+                        Разобрать с ИИ
+                      </Text>
+                    </View>
                   )}
                 </RipplePressable>
               </View>
@@ -786,13 +794,13 @@ export function LanguageWorkspace() {
                                 : colors.surfaceSubtle,
                             },
                           ])}>
-                          <Text
-                            style={[
-                              styles.sentenceDelText,
-                              { color: confirming ? '#FFFFFF' : colors.muted },
-                            ]}>
-                            {confirming ? 'Удалить?' : '×'}
-                          </Text>
+                          {confirming ? (
+                            <Text style={[styles.sentenceDelText, { color: '#FFFFFF' }]}>
+                              Удалить?
+                            </Text>
+                          ) : (
+                            <AppIcon name="close" size="sm" color={colors.muted} />
+                          )}
                         </RipplePressable>
                       </View>
 
@@ -1054,6 +1062,11 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     minWidth: 130,
     alignItems: 'center',
+  },
+  btnIconRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   primaryBtnText: {
     fontSize: 13,

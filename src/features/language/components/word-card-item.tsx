@@ -23,6 +23,8 @@ export const WORD_DRAG_MIME = 'application/x-sotaq-vocab-word';
 
 type Props = {
   word: VocabWordRecord;
+  languageCode: string;
+  speakingId: string | null;
   colors: ThemeColors;
   isDesktop: boolean;
   canDrag: boolean;
@@ -30,6 +32,7 @@ type Props = {
   canMoveDown: boolean;
   isDragging: boolean;
   dropIndicator: 'before' | 'after' | null;
+  onSpeak: (id: string, text: string, langCode: string, rate?: number) => void;
   onOpen: (wordId: string) => void;
   onChangeStatus: (word: VocabWordRecord, status: VocabStatus) => void;
   onGenerateExamples: (word: VocabWordRecord) => void;
@@ -44,6 +47,8 @@ type Props = {
 
 export function WordCardItem({
   word,
+  languageCode,
+  speakingId,
   colors,
   isDesktop,
   canDrag,
@@ -51,6 +56,7 @@ export function WordCardItem({
   canMoveDown,
   isDragging,
   dropIndicator,
+  onSpeak,
   onOpen,
   onChangeStatus,
   onGenerateExamples,
@@ -184,6 +190,23 @@ export function WordCardItem({
           </Pressable>
 
           <View style={styles.topActions}>
+            <RipplePressable
+              accessibilityLabel="Озвучить слово"
+              onPress={() => onSpeak(`word-${word.id}`, word.term, languageCode)}
+              style={StyleSheet.flatten([
+                styles.speakBtn,
+                {
+                  backgroundColor:
+                    speakingId === `word-${word.id}` ? colors.accent : 'transparent',
+                },
+              ])}>
+              <AppIcon
+                name="volume"
+                size="xs"
+                color={speakingId === `word-${word.id}` ? colors.accentText : colors.muted}
+              />
+            </RipplePressable>
+
             <View ref={statusBtnRef} collapsable={false}>
               <RipplePressable
                 accessibilityLabel="Сменить статус слова"
@@ -495,6 +518,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   moreBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  speakBtn: {
     width: 26,
     height: 26,
     borderRadius: 7,

@@ -23,6 +23,7 @@ import { useDatabase } from '@/db/provider';
 import { useAuth } from '@/features/auth/auth-context';
 import { AddLanguageDialog } from '@/features/language/components/add-language-dialog';
 import { CreateWordModal } from '@/features/language/components/create-word-modal';
+import { FlashcardStudyModal } from '@/features/language/components/flashcard-study-modal';
 import {
   SENTENCE_DRAG_MIME,
   SentenceCardItem,
@@ -47,6 +48,7 @@ import {
   listAnalyzedSentences,
   listLanguages,
   listVocabWords,
+  recordWordReview,
   reorderAnalyzedSentences,
   reorderVocabExamples,
   reorderVocabWords,
@@ -58,9 +60,11 @@ import {
 } from '@/features/language/language-repository';
 import {
   type AnalyzedSentenceRecord,
+  isWordDueForReview,
   type LanguageRecord,
   type LanguageSnapshot,
   type LanguageStat,
+  type ReviewRating,
   VOCAB_SORT_META,
   VOCAB_STATUS_META,
   VOCAB_STATUS_ORDER,
@@ -71,6 +75,7 @@ import {
 import { useUndoRedoHotkeys } from '@/hooks/use-undo-redo';
 import type { GeneratedExample, SentenceToken, WordAnalysisResult } from '@/services/ai/language-ai';
 import { getLanguageAIProvider } from '@/services/ai/mock-language-ai';
+import { useSpeech } from '@/services/speech';
 import { useThemeColors, useViewport } from '@/theme/colors';
 
 type LabTab = 'vocab' | 'sentences';
@@ -107,6 +112,8 @@ export function LanguageWorkspace() {
 
   const [selectedWordId, setSelectedWordId] = useState<string | null>(null);
   const [createWordOpen, setCreateWordOpen] = useState(false);
+  const [studyOpen, setStudyOpen] = useState(false);
+  const { speakingId, speak } = useSpeech();
   const [langDialog, setLangDialog] = useState<{
     open: boolean;
     mode: 'create' | 'edit';
@@ -270,7 +277,7 @@ export function LanguageWorkspace() {
 
   useUndoRedoHotkeys({
     enabled:
-      Boolean(activeLangId) && !createWordOpen && !selectedWordId && !langDialog.open,
+      Boolean(activeLangId) && !createWordOpen && !selectedWordId && !langDialog.open && !studyOpen,
     ignoreInsideInputs: true,
     onUndo: () => {
       handleUndo();
@@ -415,6 +422,18 @@ export function LanguageWorkspace() {
   );
 
   const masteryPct = words.length > 0 ? Math.round((statusCounts.known / words.length) * 100) : 0;
+  const dueReviewCount = useMemo(
+    () => words.filter((word) => isWordDueForReview(word)).length,
+    [words],
+  );
+
+  async function handleRateWordInStudy(word: VocabWordRecord, rating: ReviewRating) {
+    const result = await recordWordReview(db, word, rating);
+    if (activeLangId) {
+      await refreshLanguageData(activeLangId);
+    }
+    return result;
+  }
 
   // Language CRUD
   async function selectLanguage(langId: string) {
@@ -1360,18 +1379,32 @@ export function LanguageWorkspace() {
                 </ScrollView>
 
                 {words.length > 0 ? (
-                  <View style={styles.progressWrap}>
-                    <Text style={[styles.progressText, { color: colors.muted }]}>
-                      Выучено {statusCounts.known}/{words.length}
-                    </Text>
-                    <View style={[styles.progressTrack, { backgroundColor: colors.surfaceSubtle }]}>
-                      <View
-                        style={[
-                          styles.progressFill,
-                          { width: `${masteryPct}%`, backgroundColor: colors.success },
-                        ]}
-                      />
+                  <View style={styles.statusRightGroup}>
+                    <View style={styles.progressWrap}>
+                      <Text style={[styles.progressText, { color: colors.muted }]}>
+                        Выучено {statusCounts.known}/{words.length}
+                      </Text>
+                      <View style={[styles.progressTrack, { backgroundColor: colors.surfaceSubtle }]}>
+                        <View
+                          style={[
+                            styles.progressFill,
+                            { width: `${masteryPct}%`, backgroundColor: colors.success },
+                          ]}
+                        />
+                      </View>
                     </View>
+
+                    <RipplePressable
+                      onPress={() => setStudyOpen(true)}
+                      style={StyleSheet.flatten([
+                        styles.studyBtn,
+                        { backgroundColor: colors.surface, borderColor: colors.line },
+                      ])}>
+                      <AppIcon name="study" size="xs" color={colors.text} />
+                      <Text style={[styles.studyBtnText, { color: colors.text }]}>
+                        Тренировка{dueReviewCount > 0 ? ` · ${dueReviewCount}` : ''}
+                      </Text>
+                    </RipplePressable>
                   </View>
                 ) : null}
               </View>
@@ -1397,6 +1430,8 @@ export function LanguageWorkspace() {
                     <WordCardItem
                       key={word.id}
                       word={word}
+                      languageCode={activeLanguage.code}
+                      speakingId={speakingId}
                       colors={colors}
                       isDesktop={isDesktop}
                       canDrag={Platform.OS === 'web'}
@@ -1406,6 +1441,7 @@ export function LanguageWorkspace() {
                       dropIndicator={
                         wordDropTarget?.id === word.id ? wordDropTarget.position : null
                       }
+                      onSpeak={speak}
                       onOpen={(id) => setSelectedWordId(id)}
                       onChangeStatus={handleChangeWordStatus}
                       onGenerateExamples={handleGenerateExamples}
@@ -1551,6 +1587,8 @@ export function LanguageWorkspace() {
                         <WordCardItem
                           key={word.id}
                           word={word}
+                          languageCode={activeLanguage.code}
+                          speakingId={speakingId}
                           colors={colors}
                           isDesktop={isDesktop}
                           canDrag={Platform.OS === 'web'}
@@ -1560,6 +1598,7 @@ export function LanguageWorkspace() {
                           dropIndicator={
                             wordDropTarget?.id === word.id ? wordDropTarget.position : null
                           }
+                          onSpeak={speak}
                           onOpen={(id) => setSelectedWordId(id)}
                           onChangeStatus={handleChangeWordStatus}
                           onGenerateExamples={handleGenerateExamples}
@@ -1681,6 +1720,8 @@ export function LanguageWorkspace() {
                     <SentenceCardItem
                       key={item.id}
                       sentence={item}
+                      languageCode={activeLanguage.code}
+                      speakingId={speakingId}
                       colors={colors}
                       vocabByNormalizedTerm={vocabByNormalizedTerm}
                       canDrag={Platform.OS === 'web' && search.trim().length === 0}
@@ -1692,6 +1733,7 @@ export function LanguageWorkspace() {
                       dropIndicator={
                         sentenceDropTarget?.id === item.id ? sentenceDropTarget.position : null
                       }
+                      onSpeak={speak}
                       onAddTokenToVocab={handleAddTokenToVocab}
                       onAddAllTokensToVocab={handleAddAllTokensToVocab}
                       onMoveByOffset={handleMoveSentenceByOffset}
@@ -1849,7 +1891,10 @@ export function LanguageWorkspace() {
 
       <WordDetailModal
         word={selectedWord}
+        languageCode={activeLanguage.code}
+        speakingId={speakingId}
         aiGenerating={aiBusy === 'examples'}
+        onSpeak={speak}
         onClose={() => setSelectedWordId(null)}
         onSave={handleSaveWord}
         onDelete={handleDeleteWord}
@@ -1857,6 +1902,14 @@ export function LanguageWorkspace() {
         onAddManualExample={handleAddManualExample}
         onReorderExamples={handleReorderExamples}
         onDeleteExample={handleDeleteExample}
+      />
+
+      <FlashcardStudyModal
+        visible={studyOpen}
+        language={activeLanguage}
+        words={words}
+        onClose={() => setStudyOpen(false)}
+        onRateWord={handleRateWordInStudy}
       />
 
       <AddLanguageDialog
@@ -2091,6 +2144,25 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   filterChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  statusRightGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  studyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 9,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  studyBtnText: {
     fontSize: 12,
     fontWeight: '600',
   },

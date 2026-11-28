@@ -2,6 +2,7 @@ import type { SentenceGrammarRule, SentenceToken } from '@/services/ai/language-
 
 export type VocabStatus = 'new' | 'learning' | 'known';
 export type VocabSortMode = 'manual' | 'recent' | 'alpha';
+export type ReviewRating = 'again' | 'good' | 'easy';
 
 export type LanguageRecord = {
   id: string;
@@ -37,10 +38,28 @@ export type VocabWordRecord = {
   status: VocabStatus;
   reviewCount: number;
   position: number;
+  nextReviewAt: string | null;
+  intervalDays: number;
+  easeFactor: number;
+  lastReviewedAt: string | null;
   createdAt: string;
   updatedAt: string;
   examples: VocabExampleRecord[];
 };
+
+export function isWordDueForReview(word: VocabWordRecord, nowMs = Date.now()): boolean {
+  if (word.status === 'new') {
+    return true;
+  }
+  if (!word.nextReviewAt) {
+    return word.status === 'learning';
+  }
+  const ts = Date.parse(word.nextReviewAt);
+  if (Number.isNaN(ts)) {
+    return word.status !== 'known';
+  }
+  return ts <= nowMs;
+}
 
 export type AnalyzedSentenceRecord = {
   id: string;

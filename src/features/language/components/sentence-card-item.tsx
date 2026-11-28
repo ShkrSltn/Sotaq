@@ -24,6 +24,8 @@ export const SENTENCE_DRAG_MIME = 'application/x-sotaq-sentence';
 
 type Props = {
   sentence: AnalyzedSentenceRecord;
+  languageCode: string;
+  speakingId: string | null;
   colors: ThemeColors;
   vocabByNormalizedTerm: Map<string, VocabWordRecord>;
   canDrag: boolean;
@@ -31,6 +33,7 @@ type Props = {
   canMoveDown: boolean;
   isDragging: boolean;
   dropIndicator: 'before' | 'after' | null;
+  onSpeak: (id: string, text: string, langCode: string, rate?: number) => void;
   onAddTokenToVocab: (sentenceId: string, token: SentenceToken) => void;
   onAddAllTokensToVocab: (sentenceId: string, tokens: SentenceToken[]) => void;
   onMoveByOffset: (sentenceId: string, delta: -1 | 1) => void;
@@ -49,6 +52,8 @@ type Props = {
 
 export function SentenceCardItem({
   sentence,
+  languageCode,
+  speakingId,
   colors,
   vocabByNormalizedTerm,
   canDrag,
@@ -56,6 +61,7 @@ export function SentenceCardItem({
   canMoveDown,
   isDragging,
   dropIndicator,
+  onSpeak,
   onAddTokenToVocab,
   onAddAllTokensToVocab,
   onMoveByOffset,
@@ -193,6 +199,24 @@ export function SentenceCardItem({
           </Pressable>
 
           <View style={styles.headerActions}>
+            <RipplePressable
+              accessibilityLabel="Озвучить предложение"
+              onPress={() => onSpeak(`sent-${sentence.id}`, sentence.originalText, languageCode, 0.95)}
+              style={StyleSheet.flatten([
+                styles.iconBtn,
+                speakingId === `sent-${sentence.id}`
+                  ? { backgroundColor: colors.accent }
+                  : null,
+              ])}>
+              <AppIcon
+                name="volume"
+                size="sm"
+                color={
+                  speakingId === `sent-${sentence.id}` ? colors.accentText : colors.muted
+                }
+              />
+            </RipplePressable>
+
             <RipplePressable
               accessibilityLabel={collapsed ? 'Развернуть разбор' : 'Свернуть разбор'}
               onPress={() => setCollapsed((v) => !v)}

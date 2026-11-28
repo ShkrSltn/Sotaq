@@ -30,7 +30,10 @@ const DROP_BLUE = '#3B82F6';
 
 type Props = {
   word: VocabWordRecord | null;
+  languageCode: string;
+  speakingId: string | null;
   aiGenerating: boolean;
+  onSpeak: (id: string, text: string, langCode: string, rate?: number) => void;
   onClose: () => void;
   onSave: (
     wordId: string,
@@ -59,7 +62,10 @@ export function WordDetailModal(props: Props) {
 
 function WordDetailModalContent({
   word,
+  languageCode,
+  speakingId,
   aiGenerating,
+  onSpeak,
   onClose,
   onSave,
   onDelete,
@@ -290,14 +296,37 @@ function WordDetailModalContent({
               })}
             </View>
 
-            <TextInput
-              value={term}
-              onChangeText={setTerm}
-              onBlur={() => savePatchIfDirty()}
-              placeholder="Слово или фраза"
-              placeholderTextColor={colors.muted}
-              style={[styles.termInput, { color: colors.text }]}
-            />
+            <View style={styles.termSpeakRow}>
+              <TextInput
+                value={term}
+                onChangeText={setTerm}
+                onBlur={() => savePatchIfDirty()}
+                placeholder="Слово или фраза"
+                placeholderTextColor={colors.muted}
+                style={[styles.termInput, styles.flexOne, { color: colors.text }]}
+              />
+              <RipplePressable
+                accessibilityLabel="Озвучить слово"
+                onPress={() => onSpeak(`modal-word-${word.id}`, term || word.term, languageCode)}
+                style={StyleSheet.flatten([
+                  styles.modalSpeakBtn,
+                  {
+                    backgroundColor:
+                      speakingId === `modal-word-${word.id}`
+                        ? colors.accent
+                        : colors.surfaceSubtle,
+                    borderColor: colors.line,
+                  },
+                ])}>
+                <AppIcon
+                  name="volume"
+                  size="sm"
+                  color={
+                    speakingId === `modal-word-${word.id}` ? colors.accentText : colors.text
+                  }
+                />
+              </RipplePressable>
+            </View>
 
             <View style={styles.metaInputsRow}>
               <TextInput
@@ -475,6 +504,23 @@ function WordDetailModalContent({
                               {ex.sentence}
                             </Text>
                             <View style={styles.exampleBtns}>
+                              <RipplePressable
+                                accessibilityLabel="Озвучить пример"
+                                onPress={() => onSpeak(`ex-${ex.id}`, ex.sentence, languageCode, 0.95)}
+                                style={StyleSheet.flatten([
+                                  styles.exampleIconBtn,
+                                  speakingId === `ex-${ex.id}`
+                                    ? { backgroundColor: colors.accent }
+                                    : null,
+                                ])}>
+                                <AppIcon
+                                  name="volume"
+                                  size={12}
+                                  color={
+                                    speakingId === `ex-${ex.id}` ? colors.accentText : colors.muted
+                                  }
+                                />
+                              </RipplePressable>
                               {word.examples.length > 1 ? (
                                 <>
                                   <RipplePressable
@@ -683,6 +729,19 @@ const styles = StyleSheet.create({
   statusPillText: {
     fontSize: 13,
     fontWeight: '700',
+  },
+  termSpeakRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  modalSpeakBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   termInput: {
     fontSize: 24,

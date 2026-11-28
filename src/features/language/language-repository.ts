@@ -6,6 +6,7 @@ import type {
   LanguageRecord,
   LanguageSnapshot,
   LanguageStat,
+  ReviewRating,
   SentenceWordLinkRecord,
   VocabExampleRecord,
   VocabStatus,
@@ -42,6 +43,10 @@ type WordRow = {
   status: string;
   review_count: number;
   position: number;
+  next_review_at: string | null;
+  interval_days: number;
+  ease_factor: number;
+  last_reviewed_at: string | null;
   ai_payload_json: string | null;
   created_at: string;
   updated_at: string;
@@ -392,6 +397,10 @@ export async function listVocabWords(
     status: normalizeStatus(row.status),
     reviewCount: row.review_count,
     position: row.position ?? 0,
+    nextReviewAt: row.next_review_at ?? null,
+    intervalDays: row.interval_days ?? 0,
+    easeFactor: row.ease_factor ?? 2.5,
+    lastReviewedAt: row.last_reviewed_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     examples: examplesByWord.get(row.id) ?? [],
@@ -519,6 +528,65 @@ export async function setVocabWordStatus(
     nowIso(),
     wordId,
   );
+}
+
+export async function recordWordReview(
+  db: SQLiteDatabase,
+  word: VocabWordRecord,
+  rating: ReviewRating,
+): Promise<{ nextStatus: VocabStatus; nextIntervalDays: number }> {
+  const now = nowIso();
+  const baseEase = word.easeFactor > 0 ? word.easeFactor : 2.5;
+  const baseInterval = word.intervalDays > 0 ? word.intervalDays : 0;
+
+  let nextStatus: VocabStatus = word.status;
+  let nextEase = baseEase;
+  let nextIntervalDays = 0;
+
+  if (rating === 'again') {
+    nextStatus = 'learning';
+    nextEase = Math.max(1.3, Number((baseEase - 0.2).toFixed(2)));
+    nextIntervalDays = 0;
+  } else if (rating === 'good') {
+    nextIntervalDays =
+      baseInterval < 1 ? 1 : Math.max(2, Math.round(baseInterval * baseEase));
+    if (word.status === 'new') {
+      nextStatus = 'learning';
+    } else if (word.status === 'learning' && (word.reviewCount >= 2 || baseInterval >= 3)) {
+      nextStatus = 'known';
+    }
+  } else {
+    nextStatus = 'known';
+    nextEase = Math.min(3.0, Number((baseEase + 0.15).toFixed(2)));
+    nextIntervalDays = Math.max(4, Math.round(Math.max(2, baseInterval) * nextEase));
+  }
+
+  const nextDate = new Date();
+  if (nextIntervalDays > 0) {
+    nextDate.setDate(nextDate.getDate() + nextIntervalDays);
+  }
+  const nextReviewAt = nextDate.toISOString();
+
+  await db.runAsync(
+    `UPDATE vocab_words
+     SET status = ?,
+         review_count = review_count + 1,
+         interval_days = ?,
+         ease_factor = ?,
+         next_review_at = ?,
+         last_reviewed_at = ?,
+         updated_at = ?
+     WHERE id = ?;`,
+    nextStatus,
+    nextIntervalDays,
+    nextEase,
+    nextReviewAt,
+    now,
+    now,
+    word.id,
+  );
+
+  return { nextStatus, nextIntervalDays };
 }
 
 export async function reorderVocabWords(
@@ -746,8 +814,8 @@ export async function restoreLanguageSnapshot(
       const word = snapshot.words[i];
       await db.runAsync(
         `INSERT INTO vocab_words
-           (id, user_id, language_id, term, reading, part_of_speech, translation, explanation, status, review_count, position, ai_payload_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?);`,
+           (id, user_id, language_id, term, reading, part_of_speech, translation, explanation, status, review_count, position, next_review_at, interval_days, ease_factor, last_reviewed_at, ai_payload_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?);`,
         word.id,
         userId,
         languageId,
@@ -759,6 +827,10 @@ export async function restoreLanguageSnapshot(
         word.status,
         word.reviewCount,
         word.position ?? i,
+        word.nextReviewAt ?? null,
+        word.intervalDays ?? 0,
+        word.easeFactor ?? 2.5,
+        word.lastReviewedAt ?? null,
         word.createdAt,
         word.updatedAt,
       );

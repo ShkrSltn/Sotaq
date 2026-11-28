@@ -3,6 +3,7 @@ import { type ReactNode, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AppIcon } from '@/components/app-icon';
 import { RipplePressable } from '@/components/ripple-pressable';
 import { useDatabaseState } from '@/db/provider';
 import { useAuth } from '@/features/auth/auth-context';
@@ -92,13 +93,11 @@ export function AppShell({ children }: { children: ReactNode }) {
                     styles.navItem,
                     active ? { backgroundColor: colors.surfaceActive } : null,
                   ])}>
-                  <Text
-                    style={[
-                      styles.navBadge,
-                      { color: active ? colors.text : colors.muted },
-                    ]}>
-                    {feature.badge}
-                  </Text>
+                  <AppIcon
+                    name={feature.icon}
+                    size="md"
+                    color={active ? colors.text : colors.muted}
+                  />
                   <Text
                     style={[
                       styles.navLabel,
@@ -117,7 +116,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </Text>
                 {plannedFeatures.map((feature) => (
                   <View key={feature.key} style={[styles.navItem, styles.navItemDisabled]}>
-                    <Text style={[styles.navBadge, { color: colors.muted }]}>{feature.badge}</Text>
+                    <AppIcon name={feature.icon} size="md" color={colors.muted} />
                     <Text style={[styles.navLabel, { color: colors.muted }]} numberOfLines={1}>
                       {feature.title}
                     </Text>
@@ -157,7 +156,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   styles.logoutBtn,
                   { backgroundColor: colors.surfaceSubtle },
                 ])}>
-                <Text style={[styles.logoutLabel, { color: colors.muted }]}>Выйти</Text>
+                <AppIcon name="logout" size="sm" color={colors.muted} />
               </RipplePressable>
             </View>
           </View>
@@ -205,7 +204,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               styles.mobileLogoutBtn,
               { backgroundColor: colors.surfaceSubtle },
             ])}>
-            <Text style={[styles.mobileLogoutText, { color: colors.muted }]}>Выйти</Text>
+            <AppIcon name="logout" size="sm" color={colors.muted} />
           </RipplePressable>
         </View>
       </View>
@@ -232,9 +231,11 @@ export function AppShell({ children }: { children: ReactNode }) {
                 styles.mobileTab,
                 active ? { backgroundColor: colors.surfaceActive } : null,
               ])}>
-              <Text style={[styles.mobileTabBadge, { color: active ? colors.text : colors.muted }]}>
-                {feature.badge}
-              </Text>
+              <AppIcon
+                name={feature.icon}
+                size="md"
+                color={active ? colors.text : colors.muted}
+              />
               <Text
                 style={[styles.mobileTabLabel, { color: active ? colors.text : colors.muted }]}
                 numberOfLines={1}>
@@ -249,7 +250,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             accessibilityLabel="Ещё разделы"
             onPress={() => setMoreOpen(true)}
             style={styles.mobileTab}>
-            <Text style={[styles.mobileTabBadge, { color: colors.muted }]}>•••</Text>
+            <AppIcon name="more" size="md" color={colors.muted} />
             <Text style={[styles.mobileTabLabel, { color: colors.muted }]}>Ещё</Text>
           </RipplePressable>
         ) : null}
@@ -276,7 +277,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 key={feature.key}
                 onPress={() => navigateTo(feature)}
                 style={styles.navItem}>
-                <Text style={[styles.navBadge, { color: colors.text }]}>{feature.badge}</Text>
+                <AppIcon name={feature.icon} size="md" color={colors.text} />
                 <Text style={[styles.navLabel, { color: colors.text }]}>{feature.title}</Text>
               </RipplePressable>
             ))}

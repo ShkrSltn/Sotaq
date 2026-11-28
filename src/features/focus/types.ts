@@ -59,7 +59,7 @@ export const FOCUS_STATE_META: Record<FocusDisciplineState, FocusStateMeta> = {
     emoji: '🔥',
     xpMultiplier: 1.5,
     tone: 'success',
-    description: 'Идеальный ритм без срывов — активен бонус ×1.5 к очкам фокуса.',
+    description: 'Отличный ритм без срывов — прогресс идёт максимально быстро.',
   },
   sharp: {
     state: 'sharp',
@@ -68,7 +68,7 @@ export const FOCUS_STATE_META: Record<FocusDisciplineState, FocusStateMeta> = {
     emoji: '⚡',
     xpMultiplier: 1.25,
     tone: 'accent',
-    description: 'Уверенная серия завершённых сессий — бонус ×1.25 XP.',
+    description: 'Уверенная серия завершённых сессий — прогресс ускорен.',
   },
   steady: {
     state: 'steady',
@@ -77,7 +77,7 @@ export const FOCUS_STATE_META: Record<FocusDisciplineState, FocusStateMeta> = {
     emoji: '●',
     xpMultiplier: 1.0,
     tone: 'neutral',
-    description: 'Рабочее состояние. Закрывай сессии подряд, чтобы войти в Поток.',
+    description: 'Ровный темп. Завершай сессии подряд, чтобы войти в Поток.',
   },
   drifting: {
     state: 'drifting',
@@ -86,7 +86,7 @@ export const FOCUS_STATE_META: Record<FocusDisciplineState, FocusStateMeta> = {
     emoji: '⚠',
     xpMultiplier: 0.75,
     tone: 'warning',
-    description: 'Слишком много прерванных сессий или простой — множитель снижен до ×0.75.',
+    description: 'Много прерванных сессий или простой — прогресс замедлился.',
   },
   broken: {
     state: 'broken',
@@ -95,7 +95,7 @@ export const FOCUS_STATE_META: Record<FocusDisciplineState, FocusStateMeta> = {
     emoji: '🔻',
     xpMultiplier: 0.5,
     tone: 'danger',
-    description: 'Серия брошенных сессий: штраф ×0.5 XP. Закрой чистые сессии подряд для выхода.',
+    description: 'Серия брошенных сессий сбила ритм. Закрой пару полных сессий подряд.',
   },
 };
 

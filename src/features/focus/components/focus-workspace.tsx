@@ -1,7 +1,12 @@
-import { useState } from 'react';
+import { type ComponentRef, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
+import {
+  AnchoredPopover,
+  type AnchorRect,
+  measureAnchor,
+} from '@/components/anchored-popover';
 import { AppIcon } from '@/components/app-icon';
 import { RipplePressable } from '@/components/ripple-pressable';
 import {
@@ -72,7 +77,10 @@ export function FocusWorkspace() {
   const [activeTab, setActiveTab] = useState<FocusSectionTab>('timer');
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsAnchor, setSettingsAnchor] = useState<AnchorRect | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  const settingsBtnRef = useRef<ComponentRef<typeof View>>(null);
 
   const stateColor = resolveStateColor(analytics.stateMeta.tone, colors);
   const stateBg = resolveStateBg(analytics.stateMeta.tone, colors);
@@ -144,163 +152,30 @@ export function FocusWorkspace() {
           })}
         </View>
 
-        <RipplePressable
-          accessibilityLabel="Настройки таймера"
-          onPress={() => setSettingsOpen((v) => !v)}
-          style={StyleSheet.flatten([
-            styles.settingsBtn,
-            {
-              backgroundColor: settingsOpen ? colors.surfaceActive : colors.surfaceSubtle,
-              borderColor: settingsOpen ? colors.text : 'transparent',
-            },
-          ])}>
-          <AppIcon name="admin" size="sm" color={settingsOpen ? colors.text : colors.muted} />
-        </RipplePressable>
-      </View>
-
-      {/* Collapsible Settings Drawer */}
-      {settingsOpen ? (
-        <View
-          style={[
-            styles.settingsPanel,
-            { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
-          ]}>
-          <View style={styles.settingBlock}>
-            <Text style={[styles.settingLabel, { color: colors.muted }]}>
-              Дневная цель фокуса
-            </Text>
-            <View style={styles.chipRow}>
-              {FOCUS_GOAL_PRESETS.map((mins) => {
-                const active = focus.settings.dailyGoalMinutes === mins;
-                return (
-                  <RipplePressable
-                    key={mins}
-                    onPress={() => focus.updateSettings({ dailyGoalMinutes: mins })}
-                    style={StyleSheet.flatten([
-                      styles.settingChip,
-                      {
-                        backgroundColor: active ? colors.accent : colors.surface,
-                        borderColor: active ? colors.accent : colors.line,
-                      },
-                    ])}>
-                    <Text
-                      style={[
-                        styles.settingChipText,
-                        { color: active ? colors.accentText : colors.text },
-                      ]}>
-                      {mins}м
-                    </Text>
-                  </RipplePressable>
-                );
-              })}
-            </View>
-          </View>
-
-          <View style={styles.settingRowSplit}>
-            <View style={[styles.settingBlock, { flex: 1 }]}>
-              <Text style={[styles.settingLabel, { color: colors.muted }]}>Перерыв</Text>
-              <View style={styles.chipRow}>
-                {SHORT_BREAK_PRESETS.map((mins) => {
-                  const active = focus.settings.shortBreakMinutes === mins;
-                  return (
-                    <RipplePressable
-                      key={mins}
-                      onPress={() => focus.updateSettings({ shortBreakMinutes: mins })}
-                      style={StyleSheet.flatten([
-                        styles.settingChip,
-                        {
-                          backgroundColor: active ? colors.accent : colors.surface,
-                          borderColor: active ? colors.accent : colors.line,
-                        },
-                      ])}>
-                      <Text
-                        style={[
-                          styles.settingChipText,
-                          { color: active ? colors.accentText : colors.text },
-                        ]}>
-                        {mins}м
-                      </Text>
-                    </RipplePressable>
-                  );
-                })}
-              </View>
-            </View>
-
-            <View style={[styles.settingBlock, { flex: 1 }]}>
-              <Text style={[styles.settingLabel, { color: colors.muted }]}>Длинный отдых</Text>
-              <View style={styles.chipRow}>
-                {LONG_BREAK_PRESETS.map((mins) => {
-                  const active = focus.settings.longBreakMinutes === mins;
-                  return (
-                    <RipplePressable
-                      key={mins}
-                      onPress={() => focus.updateSettings({ longBreakMinutes: mins })}
-                      style={StyleSheet.flatten([
-                        styles.settingChip,
-                        {
-                          backgroundColor: active ? colors.accent : colors.surface,
-                          borderColor: active ? colors.accent : colors.line,
-                        },
-                      ])}>
-                      <Text
-                        style={[
-                          styles.settingChipText,
-                          { color: active ? colors.accentText : colors.text },
-                        ]}>
-                        {mins}м
-                      </Text>
-                    </RipplePressable>
-                  );
-                })}
-              </View>
-            </View>
-          </View>
-
-          <View style={styles.toggleRow}>
-            <RipplePressable
-              onPress={() =>
-                focus.updateSettings({ soundEnabled: !focus.settings.soundEnabled })
+        <View ref={settingsBtnRef} collapsable={false}>
+          <RipplePressable
+            accessibilityLabel="Настройки таймера"
+            onPress={() => {
+              if (settingsOpen) {
+                setSettingsOpen(false);
+                return;
               }
-              style={StyleSheet.flatten([
-                styles.togglePill,
-                {
-                  backgroundColor: focus.settings.soundEnabled
-                    ? colors.surfaceActive
-                    : colors.surface,
-                  borderColor: focus.settings.soundEnabled ? colors.text : colors.line,
-                },
-              ])}>
-              <AppIcon
-                name={focus.settings.soundEnabled ? 'volume' : 'volumeOff'}
-                size="xs"
-                color={colors.text}
-              />
-              <Text style={[styles.togglePillText, { color: colors.text }]}>
-                Звук {focus.settings.soundEnabled ? 'вкл' : 'выкл'}
-              </Text>
-            </RipplePressable>
-
-            <RipplePressable
-              onPress={() =>
-                focus.updateSettings({ autoStartBreaks: !focus.settings.autoStartBreaks })
-              }
-              style={StyleSheet.flatten([
-                styles.togglePill,
-                {
-                  backgroundColor: focus.settings.autoStartBreaks
-                    ? colors.surfaceActive
-                    : colors.surface,
-                  borderColor: focus.settings.autoStartBreaks ? colors.text : colors.line,
-                },
-              ])}>
-              <AppIcon name="play" size="xs" color={colors.text} />
-              <Text style={[styles.togglePillText, { color: colors.text }]}>
-                Авто-перерыв: {focus.settings.autoStartBreaks ? 'да' : 'нет'}
-              </Text>
-            </RipplePressable>
-          </View>
+              measureAnchor(settingsBtnRef.current, (rect) => {
+                setSettingsAnchor(rect);
+                setSettingsOpen(true);
+              });
+            }}
+            style={StyleSheet.flatten([
+              styles.settingsBtn,
+              {
+                backgroundColor: settingsOpen ? colors.surfaceActive : colors.surfaceSubtle,
+                borderColor: settingsOpen ? colors.text : 'transparent',
+              },
+            ])}>
+            <AppIcon name="admin" size="sm" color={settingsOpen ? colors.text : colors.muted} />
+          </RipplePressable>
         </View>
-      ) : null}
+      </View>
 
       {/* SVG Circular Timer */}
       <View style={styles.ringSection}>
@@ -603,15 +478,15 @@ export function FocusWorkspace() {
               },
             ]}>
             {analytics.state === 'broken'
-              ? 'Активен штраф за бросания (×0.5 XP)'
+              ? 'Сбой ритма из-за частых срывов'
               : analytics.idleDecayDays > 0
-                ? `Потеря ритма (−${analytics.idleDecayDays * 5} за простой)`
-                : 'Дисциплина снижена'}
+                ? 'Давно не было полных сессий'
+                : 'Дисциплина просела'}
           </Text>
           <Text style={[styles.calloutText, { color: colors.text }]}>
             {analytics.recoverySessionsNeeded > 0
-              ? `Закрой ${analytics.recoverySessionsNeeded} ${analytics.recoverySessionsNeeded === 1 ? 'полную сессию' : analytics.recoverySessionsNeeded <= 4 ? 'полные сессии' : 'полных сессий'} без прерываний, чтобы вернуться в Стабильность.`
-              : 'Заверши сегодня хотя бы одну полную сессию, чтобы восстановить темп.'}
+              ? `Доведи до конца ${analytics.recoverySessionsNeeded} ${analytics.recoverySessionsNeeded === 1 ? 'сессию' : analytics.recoverySessionsNeeded <= 4 ? 'сессии' : 'сессий'} подряд, чтобы вернуть нормальный ритм.`
+              : 'Закрой сегодня хотя бы одну полную сессию, чтобы вернуть темп.'}
           </Text>
         </View>
       ) : null}
@@ -714,22 +589,6 @@ export function FocusWorkspace() {
             <Text style={[styles.badgeText, { color: colors.text }]}>{badge.title}</Text>
           </View>
         ))}
-      </View>
-
-      {/* Compact Discipline Rules Reference */}
-      <View style={[styles.rulesFooter, { borderTopColor: colors.line }]}>
-        <View style={styles.ruleItem}>
-          <View style={[styles.ruleDot, { backgroundColor: colors.success }]} />
-          <Text style={[styles.ruleText, { color: colors.muted }]}>
-            Завершено: +6..10 индекса · Поток ×1.5 XP
-          </Text>
-        </View>
-        <View style={styles.ruleItem}>
-          <View style={[styles.ruleDot, { backgroundColor: colors.danger }]} />
-          <Text style={[styles.ruleText, { color: colors.muted }]}>
-            Срыв (≥1м): −12 / −18 · комбо в 0 · штраф ×0.5 XP
-          </Text>
-        </View>
       </View>
     </View>
   );
@@ -1056,6 +915,150 @@ export function FocusWorkspace() {
         </View>
       </ScrollView>
 
+      <AnchoredPopover
+        visible={settingsOpen}
+        anchor={settingsAnchor}
+        width={304}
+        estimatedHeight={276}
+        align="right"
+        colors={colors}
+        onClose={() => setSettingsOpen(false)}>
+        <View style={styles.settingsPopover}>
+          <View style={styles.settingBlock}>
+            <Text style={[styles.settingLabel, { color: colors.muted }]}>
+              Дневная цель фокуса
+            </Text>
+            <View style={styles.chipRow}>
+              {FOCUS_GOAL_PRESETS.map((mins) => {
+                const active = focus.settings.dailyGoalMinutes === mins;
+                return (
+                  <RipplePressable
+                    key={mins}
+                    onPress={() => focus.updateSettings({ dailyGoalMinutes: mins })}
+                    style={StyleSheet.flatten([
+                      styles.settingChip,
+                      {
+                        backgroundColor: active ? colors.accent : colors.surfaceSubtle,
+                        borderColor: active ? colors.accent : colors.line,
+                      },
+                    ])}>
+                    <Text
+                      style={[
+                        styles.settingChipText,
+                        { color: active ? colors.accentText : colors.text },
+                      ]}>
+                      {mins}м
+                    </Text>
+                  </RipplePressable>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.settingBlock}>
+            <Text style={[styles.settingLabel, { color: colors.muted }]}>Короткий перерыв</Text>
+            <View style={styles.chipRow}>
+              {SHORT_BREAK_PRESETS.map((mins) => {
+                const active = focus.settings.shortBreakMinutes === mins;
+                return (
+                  <RipplePressable
+                    key={mins}
+                    onPress={() => focus.updateSettings({ shortBreakMinutes: mins })}
+                    style={StyleSheet.flatten([
+                      styles.settingChip,
+                      {
+                        backgroundColor: active ? colors.accent : colors.surfaceSubtle,
+                        borderColor: active ? colors.accent : colors.line,
+                      },
+                    ])}>
+                    <Text
+                      style={[
+                        styles.settingChipText,
+                        { color: active ? colors.accentText : colors.text },
+                      ]}>
+                      {mins}м
+                    </Text>
+                  </RipplePressable>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.settingBlock}>
+            <Text style={[styles.settingLabel, { color: colors.muted }]}>Длинный отдых</Text>
+            <View style={styles.chipRow}>
+              {LONG_BREAK_PRESETS.map((mins) => {
+                const active = focus.settings.longBreakMinutes === mins;
+                return (
+                  <RipplePressable
+                    key={mins}
+                    onPress={() => focus.updateSettings({ longBreakMinutes: mins })}
+                    style={StyleSheet.flatten([
+                      styles.settingChip,
+                      {
+                        backgroundColor: active ? colors.accent : colors.surfaceSubtle,
+                        borderColor: active ? colors.accent : colors.line,
+                      },
+                    ])}>
+                    <Text
+                      style={[
+                        styles.settingChipText,
+                        { color: active ? colors.accentText : colors.text },
+                      ]}>
+                      {mins}м
+                    </Text>
+                  </RipplePressable>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={[styles.toggleRow, { borderTopColor: colors.line, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth }]}>
+            <RipplePressable
+              onPress={() =>
+                focus.updateSettings({ soundEnabled: !focus.settings.soundEnabled })
+              }
+              style={StyleSheet.flatten([
+                styles.togglePill,
+                {
+                  backgroundColor: focus.settings.soundEnabled
+                    ? colors.surfaceActive
+                    : colors.surfaceSubtle,
+                  borderColor: focus.settings.soundEnabled ? colors.text : colors.line,
+                },
+              ])}>
+              <AppIcon
+                name={focus.settings.soundEnabled ? 'volume' : 'volumeOff'}
+                size="xs"
+                color={colors.text}
+              />
+              <Text style={[styles.togglePillText, { color: colors.text }]}>
+                Звук {focus.settings.soundEnabled ? 'вкл' : 'выкл'}
+              </Text>
+            </RipplePressable>
+
+            <RipplePressable
+              onPress={() =>
+                focus.updateSettings({ autoStartBreaks: !focus.settings.autoStartBreaks })
+              }
+              style={StyleSheet.flatten([
+                styles.togglePill,
+                {
+                  backgroundColor: focus.settings.autoStartBreaks
+                    ? colors.surfaceActive
+                    : colors.surfaceSubtle,
+                  borderColor: focus.settings.autoStartBreaks ? colors.text : colors.line,
+                },
+              ])}>
+              <AppIcon name="play" size="xs" color={colors.text} />
+              <Text style={[styles.togglePillText, { color: colors.text }]}>
+                Авто-перерыв: {focus.settings.autoStartBreaks ? 'да' : 'нет'}
+              </Text>
+            </RipplePressable>
+          </View>
+        </View>
+      </AnchoredPopover>
+
       <TaskPickerModal
         visible={pickerOpen}
         selectedId={focus.linkedTarget?.id ?? null}
@@ -1249,11 +1252,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  settingsPanel: {
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: 12,
-    gap: 10,
+  settingsPopover: {
+    padding: 9,
+    gap: 11,
   },
   settingBlock: {
     gap: 6,
@@ -1263,11 +1264,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.4,
-  },
-  settingRowSplit: {
-    flexDirection: 'row',
-    gap: 10,
-    flexWrap: 'wrap',
   },
   chipRow: {
     flexDirection: 'row',
@@ -1598,26 +1594,6 @@ const styles = StyleSheet.create({
   badgeText: {
     fontSize: 11,
     fontWeight: '600',
-  },
-  rulesFooter: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: 12,
-    gap: 6,
-  },
-  ruleItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-  },
-  ruleDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  ruleText: {
-    fontSize: 11,
-    fontWeight: '500',
-    flex: 1,
   },
   chartsSection: {
     gap: 16,

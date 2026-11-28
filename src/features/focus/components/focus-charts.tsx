@@ -478,7 +478,7 @@ export function DisciplineDonutCard({
 
           <Text style={[styles.sparkHint, { color: colors.muted }]}>
             {analytics.consecutiveAbandons >= 2
-              ? `Серия срывов (${analytics.consecutiveAbandons} подряд) — прогрессивный штраф −18`
+              ? `Серия срывов (${analytics.consecutiveAbandons} подряд) — дисциплина быстро падает`
               : analytics.currentCombo >= 3
                 ? `Отличный темп: комбо ×${analytics.currentCombo} без срывов`
                 : 'Зелёные точки — завершённые, красные — брошенные'}

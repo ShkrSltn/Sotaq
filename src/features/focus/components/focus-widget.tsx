@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { type ComponentRef, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
   Platform,
@@ -13,6 +13,11 @@ import {
 import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import {
+  AnchoredPopover,
+  type AnchorRect,
+  measureAnchor,
+} from '@/components/anchored-popover';
 import { AppIcon } from '@/components/app-icon';
 import { RipplePressable } from '@/components/ripple-pressable';
 import { useDatabase } from '@/db/provider';
@@ -196,7 +201,21 @@ export function FocusSidebarWidget() {
   const colors = useThemeColors();
   const focus = useFocus();
   const [expanded, setExpanded] = useState(false);
+  const [expandAnchor, setExpandAnchor] = useState<AnchorRect | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  const cardRef = useRef<ComponentRef<typeof View>>(null);
+
+  function toggleSettingsPopover() {
+    if (expanded) {
+      setExpanded(false);
+      return;
+    }
+    measureAnchor(cardRef.current, (rect) => {
+      setExpandAnchor(rect);
+      setExpanded(true);
+    });
+  }
 
   const progress =
     focus.totalSeconds > 0
@@ -217,14 +236,16 @@ export function FocusSidebarWidget() {
   return (
     <View style={[styles.sidebarWrap, { borderTopColor: colors.line }]}>
       <View
+        ref={cardRef}
+        collapsable={false}
         style={[
           styles.card,
           { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
         ]}>
-        {/* Top Row: mode + discipline/today mins + open page + expand toggle */}
+        {/* Top Row: mode + discipline/today mins + open page + settings popover */}
         <View style={styles.cardHeader}>
           <RipplePressable
-            onPress={() => setExpanded((v) => !v)}
+            onPress={toggleSettingsPopover}
             style={styles.cardHeaderLeft}>
             <View
               style={[
@@ -267,8 +288,8 @@ export function FocusSidebarWidget() {
               <AppIcon name="maximize" size={12} color={colors.muted} />
             </RipplePressable>
             <RipplePressable
-              accessibilityLabel={expanded ? 'Свернуть' : 'Развернуть'}
-              onPress={() => setExpanded((v) => !v)}
+              accessibilityLabel="Настройки таймера"
+              onPress={toggleSettingsPopover}
               style={styles.headerMiniIconBtn}>
               <AppIcon
                 name={expanded ? 'chevronDown' : 'chevronUp'}
@@ -365,69 +386,6 @@ export function FocusSidebarWidget() {
           </RipplePressable>
         )}
 
-        {/* Expanded Settings & Stats */}
-        {expanded ? (
-          <View style={[styles.expandedBox, { borderTopColor: colors.line }]}>
-            <View style={styles.modeTabs}>
-              {MODES.map((m) => {
-                const active = focus.mode === m;
-                return (
-                  <RipplePressable
-                    key={m}
-                    onPress={() => focus.setMode(m)}
-                    style={StyleSheet.flatten([
-                      styles.modeTab,
-                      {
-                        backgroundColor: active ? colors.surfaceActive : 'transparent',
-                      },
-                    ])}>
-                    <Text
-                      style={[
-                        styles.modeTabText,
-                        { color: active ? colors.text : colors.muted },
-                      ]}>
-                      {FOCUS_MODE_META[m].shortLabel}
-                    </Text>
-                  </RipplePressable>
-                );
-              })}
-            </View>
-
-            {focus.mode === 'focus' ? (
-              <View style={styles.presetsRow}>
-                {FOCUS_DURATION_PRESETS.map((mins) => {
-                  const active = focus.focusMinutes === mins;
-                  return (
-                    <RipplePressable
-                      key={mins}
-                      onPress={() => focus.setFocusMinutes(mins)}
-                      style={StyleSheet.flatten([
-                        styles.presetBtn,
-                        {
-                          backgroundColor: active ? colors.surfaceActive : colors.surface,
-                          borderColor: active ? colors.text : colors.line,
-                        },
-                      ])}>
-                      <Text
-                        style={[
-                          styles.presetText,
-                          { color: active ? colors.text : colors.muted },
-                        ]}>
-                        {mins}м
-                      </Text>
-                    </RipplePressable>
-                  );
-                })}
-              </View>
-            ) : null}
-
-            <Text style={[styles.statsFooterText, { color: colors.muted }]}>
-              Сегодня: {focus.stats.todayMinutes} мин ({focus.stats.todaySessions}) · 7д:{' '}
-              {focus.stats.weekMinutes} мин
-            </Text>
-          </View>
-        ) : null}
-
         {focus.bannerMessage ? (
           <Text
             style={[
@@ -445,6 +403,75 @@ export function FocusSidebarWidget() {
           </Text>
         ) : null}
       </View>
+
+      <AnchoredPopover
+        visible={expanded}
+        anchor={expandAnchor}
+        width={236}
+        estimatedHeight={176}
+        align="left"
+        colors={colors}
+        onClose={() => setExpanded(false)}>
+        <View style={styles.sidebarPopoverBody}>
+          <View style={styles.modeTabs}>
+            {MODES.map((m) => {
+              const active = focus.mode === m;
+              return (
+                <RipplePressable
+                  key={m}
+                  onPress={() => focus.setMode(m)}
+                  style={StyleSheet.flatten([
+                    styles.modeTab,
+                    {
+                      backgroundColor: active ? colors.surfaceActive : 'transparent',
+                    },
+                  ])}>
+                  <Text
+                    style={[
+                      styles.modeTabText,
+                      { color: active ? colors.text : colors.muted },
+                    ]}>
+                    {FOCUS_MODE_META[m].shortLabel}
+                  </Text>
+                </RipplePressable>
+              );
+            })}
+          </View>
+
+          {focus.mode === 'focus' ? (
+            <View style={styles.presetsRow}>
+              {FOCUS_DURATION_PRESETS.map((mins) => {
+                const active = focus.focusMinutes === mins;
+                return (
+                  <RipplePressable
+                    key={mins}
+                    onPress={() => focus.setFocusMinutes(mins)}
+                    style={StyleSheet.flatten([
+                      styles.presetBtn,
+                      {
+                        backgroundColor: active ? colors.surfaceActive : colors.surfaceSubtle,
+                        borderColor: active ? colors.text : colors.line,
+                      },
+                    ])}>
+                    <Text
+                      style={[
+                        styles.presetText,
+                        { color: active ? colors.text : colors.muted },
+                      ]}>
+                      {mins}м
+                    </Text>
+                  </RipplePressable>
+                );
+              })}
+            </View>
+          ) : null}
+
+          <Text style={[styles.statsFooterText, { color: colors.muted }]}>
+            Сегодня: {focus.stats.todayMinutes} мин ({focus.stats.todaySessions}) · 7д:{' '}
+            {focus.stats.weekMinutes} мин
+          </Text>
+        </View>
+      </AnchoredPopover>
 
       <TaskPickerModal
         visible={pickerOpen}
@@ -668,7 +695,6 @@ export function FocusAbandonGuardModal() {
   }
 
   const elapsedMin = Math.max(1, Math.round(pending.elapsedSeconds / 60));
-  const penalty = focus.analytics.consecutiveAbandons >= 1 ? 18 : 12;
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={focus.cancelAbandon}>
@@ -685,12 +711,11 @@ export function FocusAbandonGuardModal() {
           </View>
           <Text style={[styles.guardTitle, { color: colors.text }]}>Бросить текущую сессию?</Text>
           <Text style={[styles.guardBody, { color: colors.muted }]}>
-            Прошло {elapsedMin} мин. Если прервать сейчас, запись попадёт в срывы: индекс
-            дисциплины снизится на −{penalty}
+            Прошло {elapsedMin} мин. Если выйти сейчас, сессия запишется как срыв
             {focus.analytics.currentCombo > 0
-              ? `, а текущее комбо (×${focus.analytics.currentCombo}) обнулится`
+              ? `, комбо (×${focus.analytics.currentCombo}) сбросится`
               : ''}
-            .
+            , а дисциплина просядет.
           </Text>
 
           <View style={styles.guardActions}>
@@ -846,10 +871,9 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '500',
   },
-  expandedBox: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: 8,
-    gap: 7,
+  sidebarPopoverBody: {
+    padding: 8,
+    gap: 10,
   },
   modeTabs: {
     flexDirection: 'row',

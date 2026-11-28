@@ -1,5 +1,7 @@
 import type { Href } from 'expo-router';
 
+import type { IconName } from '@/components/app-icon';
+
 export type FeatureKey = 'home' | 'kanban' | 'todos' | 'notes' | 'language' | 'admin';
 
 export type FeatureStatus = 'active' | 'planned';
@@ -9,7 +11,7 @@ export type FeatureDefinition = {
   title: string;
   shortTitle: string;
   description: string;
-  badge: string;
+  icon: IconName;
   route: Href | null;
   status: FeatureStatus;
   stageLabel?: string;
@@ -24,7 +26,7 @@ export const FEATURES: readonly FeatureDefinition[] = [
     title: 'Главная',
     shortTitle: 'Главная',
     description: 'Обзор всех модулей и быстрый доступ',
-    badge: '⌂',
+    icon: 'home',
     route: '/',
     status: 'active',
     defaultUserEnabled: true,
@@ -35,7 +37,7 @@ export const FEATURES: readonly FeatureDefinition[] = [
     title: 'Доска',
     shortTitle: 'Доска',
     description: 'Канбан для задач и проектов',
-    badge: '▦',
+    icon: 'kanban',
     route: '/board',
     status: 'active',
     defaultUserEnabled: true,
@@ -46,7 +48,7 @@ export const FEATURES: readonly FeatureDefinition[] = [
     title: 'Список задач',
     shortTitle: 'Задачи',
     description: 'Быстрый to-do лист со связью с доской',
-    badge: '☑',
+    icon: 'todos',
     route: '/todos',
     status: 'active',
     defaultUserEnabled: true,
@@ -57,7 +59,7 @@ export const FEATURES: readonly FeatureDefinition[] = [
     title: 'Заметки',
     shortTitle: 'Заметки',
     description: 'Блочный редактор мыслей в стиле Notion',
-    badge: '✎',
+    icon: 'notes',
     route: '/notes' as Href,
     status: 'active',
     defaultUserEnabled: true,
@@ -68,7 +70,7 @@ export const FEATURES: readonly FeatureDefinition[] = [
     title: 'Языки',
     shortTitle: 'Языки',
     description: 'Личный словарь и разбор предложений с ИИ',
-    badge: '文',
+    icon: 'language',
     route: '/language' as Href,
     status: 'active',
     defaultUserEnabled: true,
@@ -79,7 +81,7 @@ export const FEATURES: readonly FeatureDefinition[] = [
     title: 'Админ-панель',
     shortTitle: 'Админ',
     description: 'Пользователи, роли и доступ к фичам',
-    badge: '⚙',
+    icon: 'admin',
     route: '/admin' as Href,
     status: 'active',
     adminOnly: true,

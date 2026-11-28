@@ -911,30 +911,16 @@ export function KanbanWorkspace() {
 
               <View style={[styles.toolbarDivider, { backgroundColor: colors.line }]} />
 
-              {/* Group 3: Secondary + Primary CTA */}
-              <View style={styles.toolbarGroup}>
-                <RipplePressable
-                  onPress={() => setColumnDialog({ open: true, mode: 'create', column: null })}
-                  style={StyleSheet.flatten([
-                    styles.addColBtn,
-                    { backgroundColor: 'transparent', borderColor: colors.line },
-                  ])}>
-                  <AppIcon name="plus" size="xs" color={colors.muted} />
-                  <Text style={[styles.addColLabel, { color: colors.text }]}>Колонка</Text>
-                </RipplePressable>
-
-                <RipplePressable
-                  onPress={() =>
-                    setCreateCardModal({ open: true, columnId: columns[0]?.id ?? null })
-                  }
-                  style={StyleSheet.flatten([
-                    styles.addCardPrimaryBtn,
-                    { backgroundColor: colors.accent },
-                  ])}>
-                  <AppIcon name="plus" size="xs" color={colors.accentText} />
-                  <Text style={[styles.addColLabel, { color: colors.accentText }]}>Карточка</Text>
-                </RipplePressable>
-              </View>
+              {/* Group 3: Add Column */}
+              <RipplePressable
+                onPress={() => setColumnDialog({ open: true, mode: 'create', column: null })}
+                style={StyleSheet.flatten([
+                  styles.addColBtn,
+                  { backgroundColor: colors.surface, borderColor: colors.line },
+                ])}>
+                <AppIcon name="plus" size="xs" color={colors.muted} />
+                <Text style={[styles.addColLabel, { color: colors.text }]}>Колонка</Text>
+              </RipplePressable>
             </>
           ) : (
             <>
@@ -970,21 +956,6 @@ export function KanbanWorkspace() {
                   size="sm"
                   color={mobileFiltersOpen || hasActiveFilters ? colors.text : colors.muted}
                 />
-              </RipplePressable>
-
-              <RipplePressable
-                accessibilityLabel="Новая карточка"
-                onPress={() =>
-                  setCreateCardModal({
-                    open: true,
-                    columnId: columns[activeColumnIndex]?.id ?? columns[0]?.id ?? null,
-                  })
-                }
-                style={StyleSheet.flatten([
-                  styles.iconPill,
-                  { backgroundColor: colors.accent, borderColor: colors.accent },
-                ])}>
-                <AppIcon name="plus" size="sm" color={colors.accentText} />
               </RipplePressable>
             </>
           )}
@@ -1822,14 +1793,6 @@ const styles = StyleSheet.create({
   filterChipText: {
     fontSize: 12,
     fontWeight: '600',
-  },
-  addCardPrimaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 13,
-    height: 34,
-    borderRadius: 9,
   },
   addColBtn: {
     flexDirection: 'row',

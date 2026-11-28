@@ -138,10 +138,7 @@ function CreateCardModalContent({
           ) : null}
 
           <View style={[styles.header, { borderBottomColor: colors.line }]}>
-            <View style={styles.headerLeft}>
-              <AppIcon name="plus" size="sm" color={colors.text} />
-              <Text style={[styles.headerTitle, { color: colors.text }]}>Новая карточка</Text>
-            </View>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>Новая карточка</Text>
             <RipplePressable
               accessibilityLabel="Закрыть"
               onPress={onClose}
@@ -431,11 +428,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
   },
   headerTitle: {
     fontSize: 15,

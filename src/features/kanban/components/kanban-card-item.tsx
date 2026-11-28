@@ -13,6 +13,9 @@ import { WebDragBox, type WebDomDragEvent } from '@/components/web-drag-box';
 import {
   addDaysDateKey,
   formatDueDateLabel,
+  getBoardColorDisplayName,
+  hexWithAlpha,
+  type KanbanBoardColorRecord,
   type KanbanCardRecord,
   type KanbanColumnRecord,
   type KanbanPriority,
@@ -28,6 +31,7 @@ const PRIORITIES: readonly KanbanPriority[] = ['high', 'medium', 'low'];
 type Props = {
   card: KanbanCardRecord;
   columns: KanbanColumnRecord[];
+  boardColors: KanbanBoardColorRecord[];
   colors: ThemeColors;
   isDesktop: boolean;
   canMoveLeft: boolean;
@@ -41,7 +45,11 @@ type Props = {
   onMoveColumnStep: (direction: -1 | 1) => void;
   onMoveToColumn: (columnId: string) => void;
   onReorderStep: (direction: -1 | 1) => void;
-  onQuickUpdate: (patch: { priority?: KanbanPriority; dueDate?: string | null }) => void;
+  onQuickUpdate: (patch: {
+    priority?: KanbanPriority;
+    dueDate?: string | null;
+    colorId?: string | null;
+  }) => void;
   onDelete: () => void;
   onDragStart?: (cardId: string) => void;
   onDragEnd?: () => void;
@@ -52,6 +60,7 @@ type Props = {
 export function KanbanCardItem({
   card,
   columns,
+  boardColors,
   colors,
   isDesktop,
   canMoveLeft,
@@ -87,6 +96,10 @@ export function KanbanCardItem({
   const doneSubtasks = card.subtasks.filter((item) => item.isDone).length;
   const hasDescription = card.description.trim().length > 0;
   const priorityMeta = PRIORITY_META[card.priority];
+  const cardColor = card.colorId
+    ? (boardColors.find((item) => item.id === card.colorId) ?? null)
+    : null;
+  const cardColorName = cardColor?.name.trim() ?? '';
   const showDesktopHoverBar = isDesktop && (hovered || actionsMenuOpen) && !isDragging;
 
   function resolveVerticalPosition(event: WebDomDragEvent): CardDropPosition {
@@ -179,10 +192,23 @@ export function KanbanCardItem({
         }}
         style={[
           styles.card,
-          {
-            backgroundColor: hovered ? colors.surfaceActive : colors.surfaceSubtle,
-            borderColor: hovered || actionsMenuOpen || priorityMenuOpen ? colors.line : 'transparent',
-          },
+          cardColor
+            ? {
+                backgroundColor: hovered
+                  ? hexWithAlpha(cardColor.color, 0.22)
+                  : hexWithAlpha(cardColor.color, 0.14),
+                borderColor:
+                  hovered || actionsMenuOpen || priorityMenuOpen
+                    ? hexWithAlpha(cardColor.color, 0.55)
+                    : hexWithAlpha(cardColor.color, 0.3),
+                borderLeftWidth: 3.5,
+                borderLeftColor: cardColor.color,
+              }
+            : {
+                backgroundColor: hovered ? colors.surfaceActive : colors.surfaceSubtle,
+                borderColor:
+                  hovered || actionsMenuOpen || priorityMenuOpen ? colors.line : 'transparent',
+              },
         ]}>
         {/* Main clickable title area (independent sibling, never wraps buttons) */}
         <Pressable
@@ -198,6 +224,24 @@ export function KanbanCardItem({
         {/* Bottom Meta & Controls Row */}
         <View style={styles.footerRow}>
           <View style={styles.metaRow}>
+            {cardColor && cardColorName.length > 0 ? (
+              <Pressable
+                onPress={onPress}
+                style={[
+                  styles.metaPill,
+                  {
+                    backgroundColor: hexWithAlpha(cardColor.color, 0.2),
+                    borderColor: hexWithAlpha(cardColor.color, 0.45),
+                    borderWidth: StyleSheet.hairlineWidth,
+                  },
+                ]}>
+                <View style={[styles.priorityDot, { backgroundColor: cardColor.color }]} />
+                <Text style={[styles.metaText, { color: colors.text }]} numberOfLines={1}>
+                  {cardColorName}
+                </Text>
+              </Pressable>
+            ) : null}
+
             {/* 1-click Priority Pill */}
             <View ref={priorityBtnRef} collapsable={false}>
               <RipplePressable
@@ -445,12 +489,12 @@ export function KanbanCardItem({
         </View>
       </AnchoredPopover>
 
-      {/* Floating Card Quick Actions Popover (Column, Priority, Due Date, Reorder, Delete) */}
+      {/* Floating Card Quick Actions Popover (Color, Priority, Column, Due Date, Reorder, Delete) */}
       <AnchoredPopover
         visible={actionsMenuOpen}
         anchor={actionsAnchor}
-        width={236}
-        estimatedHeight={340}
+        width={244}
+        estimatedHeight={boardColors.length > 0 ? 410 : 340}
         align="right"
         colors={colors}
         onClose={() => {
@@ -458,6 +502,57 @@ export function KanbanCardItem({
           setConfirmDelete(false);
         }}>
         <View style={styles.popoverBody}>
+          {/* Quick Board Color / Project Picker */}
+          {boardColors.length > 0 ? (
+            <View style={[styles.popoverSection, { borderBottomColor: colors.line }]}>
+              <Text style={[styles.popoverCaption, { color: colors.muted }]}>Цвет / Проект</Text>
+              <View style={styles.quickChipRow}>
+                {boardColors.map((item) => {
+                  const selected = card.colorId === item.id;
+                  return (
+                    <RipplePressable
+                      key={item.id}
+                      onPress={() => {
+                        onQuickUpdate({ colorId: selected ? null : item.id });
+                        setActionsMenuOpen(false);
+                      }}
+                      style={StyleSheet.flatten([
+                        styles.quickChip,
+                        {
+                          backgroundColor: selected
+                            ? hexWithAlpha(item.color, 0.28)
+                            : colors.surfaceSubtle,
+                          borderWidth: StyleSheet.hairlineWidth,
+                          borderColor: selected ? item.color : 'transparent',
+                        },
+                      ])}>
+                      <View style={[styles.priorityDot, { backgroundColor: item.color }]} />
+                      <Text
+                        style={[styles.quickChipText, { color: colors.text }]}
+                        numberOfLines={1}>
+                        {getBoardColorDisplayName(item)}
+                      </Text>
+                    </RipplePressable>
+                  );
+                })}
+                {card.colorId ? (
+                  <RipplePressable
+                    accessibilityLabel="Убрать цвет"
+                    onPress={() => {
+                      onQuickUpdate({ colorId: null });
+                      setActionsMenuOpen(false);
+                    }}
+                    style={StyleSheet.flatten([
+                      styles.quickIconChip,
+                      { backgroundColor: colors.surfaceSubtle },
+                    ])}>
+                    <AppIcon name="close" size="xs" color={colors.muted} />
+                  </RipplePressable>
+                ) : null}
+              </View>
+            </View>
+          ) : null}
+
           {/* Quick Priority Row */}
           <View style={[styles.popoverSection, { borderBottomColor: colors.line }]}>
             <Text style={[styles.popoverCaption, { color: colors.muted }]}>Приоритет</Text>

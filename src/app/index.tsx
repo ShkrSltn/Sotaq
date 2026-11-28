@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { AppIcon } from '@/components/app-icon';
 import { RipplePressable } from '@/components/ripple-pressable';
 import { useDatabaseState } from '@/db/provider';
 import { useAuth } from '@/features/auth/auth-context';
@@ -80,9 +81,9 @@ export default function HomeScreen() {
                   ])}>
                   <View style={styles.cardHeader}>
                     <View style={[styles.badgeBox, { backgroundColor: colors.surfaceSubtle }]}>
-                      <Text style={[styles.badgeGlyph, { color: colors.text }]}>{item.badge}</Text>
+                      <AppIcon name={item.icon} size="lg" color={colors.text} />
                     </View>
-                    <Text style={[styles.cardArrow, { color: colors.muted }]}>→</Text>
+                    <AppIcon name="arrowRight" size="sm" color={colors.muted} />
                   </View>
                   <Text style={[styles.cardTitle, { color: colors.text }]}>{item.title}</Text>
                   <Text style={[styles.cardDetail, { color: colors.muted }]}>
@@ -109,7 +110,7 @@ export default function HomeScreen() {
                   ]}>
                   <View style={styles.cardHeader}>
                     <View style={[styles.badgeBox, { backgroundColor: colors.surfaceSubtle }]}>
-                      <Text style={[styles.badgeGlyph, { color: colors.muted }]}>{item.badge}</Text>
+                      <AppIcon name={item.icon} size="lg" color={colors.muted} />
                     </View>
                     {item.stageLabel ? (
                       <View style={[styles.stageTag, { backgroundColor: colors.surfaceSubtle }]}>

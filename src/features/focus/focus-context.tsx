@@ -13,11 +13,22 @@ import { Platform } from 'react-native';
 import { nowIso } from '@/db/client';
 import { useDatabase } from '@/db/provider';
 import { useAuth } from '@/features/auth/auth-context';
-import { getFocusStats, saveFocusSession } from '@/features/focus/focus-repository';
+import { createEmptyFocusAnalytics } from '@/features/focus/focus-analytics';
 import {
-  FOCUS_MODE_META,
+  deleteFocusSession,
+  deriveFocusStats,
+  getFocusAnalytics,
+  getFocusSettings,
+  saveFocusSession,
+  upsertFocusSettings,
+} from '@/features/focus/focus-repository';
+import {
+  ABANDON_GRACE_SECONDS,
+  DEFAULT_FOCUS_SETTINGS,
+  type FocusAnalytics,
   type FocusLinkTarget,
   type FocusMode,
+  type FocusSettings,
   type FocusStats,
 } from '@/features/focus/types';
 
@@ -53,23 +64,34 @@ function playCompletionChime() {
   }
 }
 
-const EMPTY_STATS: FocusStats = {
-  todayMinutes: 0,
-  todaySessions: 0,
-  weekMinutes: 0,
-  weekSessions: 0,
-  recentSessions: [],
+export type PendingAbandonAction = {
+  kind: 'reset' | 'skip' | 'mode';
+  nextMode?: FocusMode;
+  elapsedSeconds: number;
 };
+
+type FocusBanner = {
+  text: string;
+  tone: 'success' | 'danger' | 'neutral';
+};
+
+const EMPTY_ANALYTICS = createEmptyFocusAnalytics(DEFAULT_FOCUS_SETTINGS.dailyGoalMinutes);
 
 type FocusContextValue = {
   mode: FocusMode;
   focusMinutes: number;
+  settings: FocusSettings;
   secondsLeft: number;
   totalSeconds: number;
   isRunning: boolean;
+  sessionStarted: boolean;
+  completedInCycle: number;
   linkedTarget: FocusLinkTarget | null;
+  analytics: FocusAnalytics;
   stats: FocusStats;
   bannerMessage: string | null;
+  bannerTone: 'success' | 'danger' | 'neutral';
+  pendingAbandon: PendingAbandonAction | null;
   start: () => void;
   pause: () => void;
   toggle: () => void;
@@ -77,7 +99,11 @@ type FocusContextValue = {
   skip: () => void;
   setMode: (nextMode: FocusMode) => void;
   setFocusMinutes: (minutes: number) => void;
+  updateSettings: (patch: Partial<FocusSettings>) => Promise<void>;
   linkTarget: (target: FocusLinkTarget | null) => void;
+  confirmAbandon: () => Promise<void>;
+  cancelAbandon: () => void;
+  removeSession: (sessionId: string) => Promise<void>;
   refreshStats: () => Promise<void>;
 };
 
@@ -88,40 +114,60 @@ export function FocusProvider({ children }: { children: ReactNode }) {
   const { user, status } = useAuth();
   const userId = status === 'authenticated' ? (user?.id ?? '') : '';
 
+  const [settings, setSettings] = useState<FocusSettings>(DEFAULT_FOCUS_SETTINGS);
   const [mode, setModeState] = useState<FocusMode>('focus');
-  const [focusMinutes, setFocusMinutesState] = useState(25);
-  const [secondsLeft, setSecondsLeft] = useState(25 * 60);
+  const [secondsLeft, setSecondsLeft] = useState(DEFAULT_FOCUS_SETTINGS.focusMinutes * 60);
   const [isRunning, setIsRunning] = useState(false);
+  const [sessionStarted, setSessionStarted] = useState(false);
+  const [completedInCycle, setCompletedInCycle] = useState(0);
   const [linkedTarget, setLinkedTarget] = useState<FocusLinkTarget | null>(null);
-  const [stats, setStats] = useState<FocusStats>(EMPTY_STATS);
-  const [bannerMessage, setBannerMessage] = useState<string | null>(null);
+  const [analytics, setAnalytics] = useState<FocusAnalytics>(EMPTY_ANALYTICS);
+  const [banner, setBanner] = useState<FocusBanner | null>(null);
+  const [pendingAbandon, setPendingAbandon] = useState<PendingAbandonAction | null>(null);
 
   const endTsRef = useRef<number | null>(null);
   const startedAtRef = useRef<string | null>(null);
-  const completedFocusStreakRef = useRef(0);
   const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settingsRef = useRef<FocusSettings>(DEFAULT_FOCUS_SETTINGS);
+  const isRunningRef = useRef(false);
+  const sessionStartedRef = useRef(false);
 
-  const durationForMode = useCallback(
-    (targetMode: FocusMode, customFocusMin = focusMinutes) => {
-      if (targetMode === 'focus') {
-        return customFocusMin * 60;
-      }
-      return FOCUS_MODE_META[targetMode].defaultMinutes * 60;
-    },
-    [focusMinutes],
-  );
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  useEffect(() => {
+    isRunningRef.current = isRunning;
+  }, [isRunning]);
+
+  useEffect(() => {
+    sessionStartedRef.current = sessionStarted;
+  }, [sessionStarted]);
+
+  const durationForMode = useCallback((targetMode: FocusMode, cfg: FocusSettings = settings) => {
+    if (targetMode === 'focus') {
+      return cfg.focusMinutes * 60;
+    }
+    if (targetMode === 'short_break') {
+      return cfg.shortBreakMinutes * 60;
+    }
+    return cfg.longBreakMinutes * 60;
+  }, [settings]);
 
   const totalSeconds = durationForMode(mode);
 
-  const showBanner = useCallback((msg: string) => {
-    setBannerMessage(msg);
-    if (bannerTimerRef.current) {
-      clearTimeout(bannerTimerRef.current);
-    }
-    bannerTimerRef.current = setTimeout(() => {
-      setBannerMessage(null);
-    }, 3200);
-  }, []);
+  const showBanner = useCallback(
+    (text: string, tone: 'success' | 'danger' | 'neutral' = 'success') => {
+      setBanner({ text, tone });
+      if (bannerTimerRef.current) {
+        clearTimeout(bannerTimerRef.current);
+      }
+      bannerTimerRef.current = setTimeout(() => {
+        setBanner(null);
+      }, 3600);
+    },
+    [],
+  );
 
   useEffect(() => {
     return () => {
@@ -135,8 +181,8 @@ export function FocusProvider({ children }: { children: ReactNode }) {
     if (!userId) {
       return;
     }
-    const next = await getFocusStats(db, userId);
-    setStats(next);
+    const next = await getFocusAnalytics(db, userId, settingsRef.current.dailyGoalMinutes);
+    setAnalytics(next);
   }, [db, userId]);
 
   useEffect(() => {
@@ -144,11 +190,20 @@ export function FocusProvider({ children }: { children: ReactNode }) {
       return;
     }
     let cancelled = false;
-    getFocusStats(db, userId).then((next) => {
-      if (!cancelled) {
-        setStats(next);
+    async function loadInitial() {
+      const loadedSettings = await getFocusSettings(db, userId);
+      if (cancelled) return;
+      settingsRef.current = loadedSettings;
+      setSettings(loadedSettings);
+      if (!isRunningRef.current && !sessionStartedRef.current) {
+        setSecondsLeft(loadedSettings.focusMinutes * 60);
       }
-    });
+      const nextAnalytics = await getFocusAnalytics(db, userId, loadedSettings.dailyGoalMinutes);
+      if (!cancelled) {
+        setAnalytics(nextAnalytics);
+      }
+    }
+    loadInitial();
     return () => {
       cancelled = true;
     };
@@ -156,15 +211,17 @@ export function FocusProvider({ children }: { children: ReactNode }) {
 
   const finishCurrentSession = useCallback(
     async (completed: boolean) => {
-      const dur = durationForMode(mode);
+      const cfg = settingsRef.current;
+      const dur = durationForMode(mode, cfg);
       const elapsed = completed ? dur : Math.max(0, dur - secondsLeft);
       const startedAt = startedAtRef.current ?? nowIso();
 
       endTsRef.current = null;
       startedAtRef.current = null;
       setIsRunning(false);
+      setSessionStarted(false);
 
-      if (userId && (completed || elapsed >= 60)) {
+      if (userId && mode === 'focus' && (completed || elapsed >= ABANDON_GRACE_SECONDS)) {
         await saveFocusSession(db, userId, {
           mode,
           durationSeconds: dur,
@@ -173,26 +230,45 @@ export function FocusProvider({ children }: { children: ReactNode }) {
           linkedTarget,
           startedAt,
         });
-        await refreshStats();
+        const nextAnalytics = await getFocusAnalytics(db, userId, cfg.dailyGoalMinutes);
+        setAnalytics(nextAnalytics);
       }
 
       if (completed) {
-        playCompletionChime();
+        if (cfg.soundEnabled) {
+          playCompletionChime();
+        }
         if (mode === 'focus') {
-          completedFocusStreakRef.current += 1;
-          const nextMode: FocusMode =
-            completedFocusStreakRef.current % 4 === 0 ? 'long_break' : 'short_break';
+          const nextCycleCount = completedInCycle + 1;
+          const nextMode: FocusMode = nextCycleCount % 4 === 0 ? 'long_break' : 'short_break';
+          setCompletedInCycle(nextCycleCount % 4);
           setModeState(nextMode);
-          setSecondsLeft(durationForMode(nextMode));
-          showBanner('Фокус-сессия завершена! Время перерыва');
+          const nextDur = durationForMode(nextMode, cfg);
+          setSecondsLeft(nextDur);
+          if (cfg.autoStartBreaks) {
+            startedAtRef.current = nowIso();
+            endTsRef.current = Date.now() + nextDur * 1000;
+            setSessionStarted(true);
+            setIsRunning(true);
+          }
+          showBanner('Фокус завершён! +дисциплина и комбо', 'success');
         } else {
           setModeState('focus');
-          setSecondsLeft(durationForMode('focus'));
-          showBanner('Перерыв окончен — можно в фокус');
+          setSecondsLeft(durationForMode('focus', cfg));
+          showBanner('Перерыв окончен — пора в фокус', 'neutral');
         }
       }
     },
-    [db, durationForMode, linkedTarget, mode, refreshStats, secondsLeft, showBanner, userId],
+    [
+      completedInCycle,
+      db,
+      durationForMode,
+      linkedTarget,
+      mode,
+      secondsLeft,
+      showBanner,
+      userId,
+    ],
   );
 
   useEffect(() => {
@@ -226,6 +302,7 @@ export function FocusProvider({ children }: { children: ReactNode }) {
       startedAtRef.current = nowIso();
     }
     endTsRef.current = Date.now() + secondsLeft * 1000;
+    setSessionStarted(true);
     setIsRunning(true);
   }, [isRunning, secondsLeft]);
 
@@ -248,62 +325,186 @@ export function FocusProvider({ children }: { children: ReactNode }) {
     }
   }, [isRunning, pause, start]);
 
-  const reset = useCallback(() => {
-    const dur = durationForMode(mode);
-    const elapsed = dur - secondsLeft;
-    if (mode === 'focus' && elapsed >= 60 && startedAtRef.current && userId) {
-      finishCurrentSession(false);
-    } else {
+  const getActiveFocusElapsed = useCallback(() => {
+    if (mode !== 'focus' || !sessionStarted) {
+      return 0;
+    }
+    const dur = durationForMode('focus', settingsRef.current);
+    const liveSecondsLeft =
+      isRunning && endTsRef.current
+        ? Math.max(0, Math.ceil((endTsRef.current - Date.now()) / 1000))
+        : secondsLeft;
+    return Math.max(0, dur - liveSecondsLeft);
+  }, [durationForMode, isRunning, mode, secondsLeft, sessionStarted]);
+
+  const executeCleanTransition = useCallback(
+    (action: PendingAbandonAction) => {
+      const cfg = settingsRef.current;
       endTsRef.current = null;
       startedAtRef.current = null;
       setIsRunning(false);
-    }
-    setSecondsLeft(dur);
-  }, [durationForMode, finishCurrentSession, mode, secondsLeft, userId]);
+      setSessionStarted(false);
+
+      if (action.kind === 'reset') {
+        setSecondsLeft(durationForMode(mode, cfg));
+      } else if (action.kind === 'skip') {
+        const nextMode: FocusMode = mode === 'focus' ? 'short_break' : 'focus';
+        setModeState(nextMode);
+        setSecondsLeft(durationForMode(nextMode, cfg));
+      } else if (action.kind === 'mode' && action.nextMode) {
+        setModeState(action.nextMode);
+        setSecondsLeft(durationForMode(action.nextMode, cfg));
+      }
+    },
+    [durationForMode, mode],
+  );
+
+  const requestOrRunAction = useCallback(
+    (kind: 'reset' | 'skip' | 'mode', nextMode?: FocusMode) => {
+      if (kind === 'mode' && nextMode === mode) {
+        return;
+      }
+      const elapsed = getActiveFocusElapsed();
+      if (userId && mode === 'focus' && sessionStarted && elapsed >= ABANDON_GRACE_SECONDS) {
+        setPendingAbandon({ kind, nextMode, elapsedSeconds: elapsed });
+        return;
+      }
+      executeCleanTransition({ kind, nextMode, elapsedSeconds: elapsed });
+    },
+    [executeCleanTransition, getActiveFocusElapsed, mode, sessionStarted, userId],
+  );
+
+  const reset = useCallback(() => {
+    requestOrRunAction('reset');
+  }, [requestOrRunAction]);
 
   const skip = useCallback(() => {
-    endTsRef.current = null;
-    startedAtRef.current = null;
-    setIsRunning(false);
-    const nextMode: FocusMode = mode === 'focus' ? 'short_break' : 'focus';
-    setModeState(nextMode);
-    setSecondsLeft(durationForMode(nextMode));
-  }, [durationForMode, mode]);
+    requestOrRunAction('skip');
+  }, [requestOrRunAction]);
 
   const setMode = useCallback(
     (nextMode: FocusMode) => {
-      endTsRef.current = null;
-      startedAtRef.current = null;
-      setIsRunning(false);
-      setModeState(nextMode);
-      setSecondsLeft(durationForMode(nextMode));
+      requestOrRunAction('mode', nextMode);
     },
-    [durationForMode],
+    [requestOrRunAction],
+  );
+
+  const confirmAbandon = useCallback(async () => {
+    const action = pendingAbandon;
+    setPendingAbandon(null);
+    if (!action) {
+      return;
+    }
+
+    const cfg = settingsRef.current;
+    const dur = durationForMode('focus', cfg);
+    const liveElapsed = Math.max(action.elapsedSeconds, getActiveFocusElapsed());
+    const startedAt = startedAtRef.current ?? nowIso();
+
+    executeCleanTransition(action);
+
+    if (userId && liveElapsed >= ABANDON_GRACE_SECONDS) {
+      await saveFocusSession(db, userId, {
+        mode: 'focus',
+        durationSeconds: dur,
+        elapsedSeconds: Math.min(dur, liveElapsed),
+        completed: false,
+        linkedTarget,
+        startedAt,
+      });
+      const nextAnalytics = await getFocusAnalytics(db, userId, cfg.dailyGoalMinutes);
+      setAnalytics(nextAnalytics);
+      showBanner('Сессия брошена · комбо сброшено, дисциплина снижена', 'danger');
+    }
+  }, [
+    db,
+    durationForMode,
+    executeCleanTransition,
+    getActiveFocusElapsed,
+    linkedTarget,
+    pendingAbandon,
+    showBanner,
+    userId,
+  ]);
+
+  const cancelAbandon = useCallback(() => {
+    setPendingAbandon(null);
+  }, []);
+
+  const updateSettings = useCallback(
+    async (patch: Partial<FocusSettings>) => {
+      const merged: FocusSettings = { ...settingsRef.current, ...patch };
+      settingsRef.current = merged;
+      setSettings(merged);
+
+      if (!isRunningRef.current && !sessionStartedRef.current) {
+        if (mode === 'focus' && patch.focusMinutes !== undefined) {
+          setSecondsLeft(merged.focusMinutes * 60);
+        } else if (mode === 'short_break' && patch.shortBreakMinutes !== undefined) {
+          setSecondsLeft(merged.shortBreakMinutes * 60);
+        } else if (mode === 'long_break' && patch.longBreakMinutes !== undefined) {
+          setSecondsLeft(merged.longBreakMinutes * 60);
+        }
+      }
+
+      if (userId) {
+        const saved = await upsertFocusSettings(db, userId, merged);
+        settingsRef.current = saved;
+        setSettings(saved);
+        if (patch.dailyGoalMinutes !== undefined) {
+          const nextAnalytics = await getFocusAnalytics(db, userId, saved.dailyGoalMinutes);
+          setAnalytics(nextAnalytics);
+        }
+      }
+    },
+    [db, mode, userId],
   );
 
   const setFocusMinutes = useCallback(
     (minutes: number) => {
-      setFocusMinutesState(minutes);
-      if (mode === 'focus') {
-        endTsRef.current = null;
-        startedAtRef.current = null;
-        setIsRunning(false);
+      if (mode === 'focus' && !isRunning && !sessionStarted) {
         setSecondsLeft(minutes * 60);
       }
+      updateSettings({ focusMinutes: minutes });
     },
-    [mode],
+    [isRunning, mode, sessionStarted, updateSettings],
   );
+
+  const removeSession = useCallback(
+    async (sessionId: string) => {
+      if (!userId) {
+        return;
+      }
+      await deleteFocusSession(db, userId, sessionId);
+      const nextAnalytics = await getFocusAnalytics(
+        db,
+        userId,
+        settingsRef.current.dailyGoalMinutes,
+      );
+      setAnalytics(nextAnalytics);
+    },
+    [db, userId],
+  );
+
+  const activeAnalytics = userId ? analytics : EMPTY_ANALYTICS;
+  const stats = useMemo(() => deriveFocusStats(activeAnalytics), [activeAnalytics]);
 
   const value = useMemo<FocusContextValue>(
     () => ({
       mode,
-      focusMinutes,
+      focusMinutes: settings.focusMinutes,
+      settings,
       secondsLeft,
       totalSeconds,
       isRunning,
+      sessionStarted,
+      completedInCycle,
       linkedTarget,
-      stats: userId ? stats : EMPTY_STATS,
-      bannerMessage,
+      analytics: activeAnalytics,
+      stats,
+      bannerMessage: banner?.text ?? null,
+      bannerTone: banner?.tone ?? 'neutral',
+      pendingAbandon,
       start,
       pause,
       toggle,
@@ -311,19 +512,26 @@ export function FocusProvider({ children }: { children: ReactNode }) {
       skip,
       setMode,
       setFocusMinutes,
+      updateSettings,
       linkTarget: setLinkedTarget,
+      confirmAbandon,
+      cancelAbandon,
+      removeSession,
       refreshStats,
     }),
     [
       mode,
-      focusMinutes,
+      settings,
       secondsLeft,
       totalSeconds,
       isRunning,
+      sessionStarted,
+      completedInCycle,
       linkedTarget,
-      userId,
+      activeAnalytics,
       stats,
-      bannerMessage,
+      banner,
+      pendingAbandon,
       start,
       pause,
       toggle,
@@ -331,6 +539,10 @@ export function FocusProvider({ children }: { children: ReactNode }) {
       skip,
       setMode,
       setFocusMinutes,
+      updateSettings,
+      confirmAbandon,
+      cancelAbandon,
+      removeSession,
       refreshStats,
     ],
   );

@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Modal,
@@ -29,7 +30,7 @@ import { useThemeColors, useViewport } from '@/theme/colors';
 
 const MODES: readonly FocusMode[] = ['focus', 'short_break', 'long_break'];
 
-function TaskPickerModal({
+export function TaskPickerModal({
   visible,
   selectedId,
   onSelect,
@@ -202,7 +203,16 @@ export function FocusSidebarWidget() {
       ? Math.min(100, Math.round(((focus.totalSeconds - focus.secondsLeft) / focus.totalSeconds) * 100))
       : 0;
 
-  const accentColor = focus.mode === 'focus' ? colors.accent : colors.success;
+  const accentColor =
+    focus.mode !== 'focus'
+      ? colors.success
+      : focus.analytics.state === 'broken'
+        ? colors.danger
+        : focus.analytics.state === 'drifting'
+          ? colors.warning
+          : focus.analytics.state === 'flow'
+            ? colors.success
+            : colors.accent;
 
   return (
     <View style={[styles.sidebarWrap, { borderTopColor: colors.line }]}>
@@ -211,11 +221,11 @@ export function FocusSidebarWidget() {
           styles.card,
           { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
         ]}>
-        {/* Top Row: mode + today mins + expand toggle */}
-        <RipplePressable
-          onPress={() => setExpanded((v) => !v)}
-          style={styles.cardHeader}>
-          <View style={styles.cardHeaderLeft}>
+        {/* Top Row: mode + discipline/today mins + open page + expand toggle */}
+        <View style={styles.cardHeader}>
+          <RipplePressable
+            onPress={() => setExpanded((v) => !v)}
+            style={styles.cardHeaderLeft}>
             <View
               style={[
                 styles.liveDot,
@@ -225,21 +235,49 @@ export function FocusSidebarWidget() {
             <Text style={[styles.modeLabel, { color: colors.muted }]}>
               {FOCUS_MODE_META[focus.mode].shortLabel}
             </Text>
-          </View>
+            <Text
+              style={[
+                styles.disciplineMiniTag,
+                {
+                  color:
+                    focus.analytics.state === 'broken'
+                      ? colors.danger
+                      : focus.analytics.state === 'drifting'
+                        ? colors.warning
+                        : focus.analytics.state === 'flow'
+                          ? colors.success
+                          : colors.muted,
+                },
+              ]}>
+              {focus.analytics.stateMeta.emoji}{' '}
+              {focus.analytics.currentCombo > 0
+                ? `×${focus.analytics.currentCombo}`
+                : focus.analytics.disciplineScore}
+            </Text>
+          </RipplePressable>
 
           <View style={styles.cardHeaderRight}>
             <Text style={[styles.todayMeta, { color: colors.muted }]}>
-              {focus.stats.todayMinutes > 0
-                ? `${focus.stats.todayMinutes}м`
-                : '0м'}
+              {focus.stats.todayMinutes > 0 ? `${focus.stats.todayMinutes}м` : '0м'}
             </Text>
-            <AppIcon
-              name={expanded ? 'chevronDown' : 'chevronUp'}
-              size="xs"
-              color={colors.muted}
-            />
+            <RipplePressable
+              accessibilityLabel="Открыть страницу фокуса"
+              onPress={() => router.navigate('/focus' as never)}
+              style={styles.headerMiniIconBtn}>
+              <AppIcon name="maximize" size={12} color={colors.muted} />
+            </RipplePressable>
+            <RipplePressable
+              accessibilityLabel={expanded ? 'Свернуть' : 'Развернуть'}
+              onPress={() => setExpanded((v) => !v)}
+              style={styles.headerMiniIconBtn}>
+              <AppIcon
+                name={expanded ? 'chevronDown' : 'chevronUp'}
+                size="xs"
+                color={colors.muted}
+              />
+            </RipplePressable>
           </View>
-        </RipplePressable>
+        </View>
 
         {/* Clock + Quick Controls */}
         <View style={styles.clockRow}>
@@ -391,7 +429,20 @@ export function FocusSidebarWidget() {
         ) : null}
 
         {focus.bannerMessage ? (
-          <Text style={[styles.bannerText, { color: colors.success }]}>{focus.bannerMessage}</Text>
+          <Text
+            style={[
+              styles.bannerText,
+              {
+                color:
+                  focus.bannerTone === 'danger'
+                    ? colors.danger
+                    : focus.bannerTone === 'success'
+                      ? colors.success
+                      : colors.text,
+              },
+            ]}>
+            {focus.bannerMessage}
+          </Text>
         ) : null}
       </View>
 
@@ -573,9 +624,25 @@ export function FocusMobileTrigger() {
               </RipplePressable>
 
               <Text style={[styles.statsFooterText, { color: colors.muted, textAlign: 'center' }]}>
-                Сегодня: {focus.stats.todayMinutes} мин ({focus.stats.todaySessions} сессий) · 7
-                дней: {focus.stats.weekMinutes} мин
+                Сегодня: {focus.stats.todayMinutes}/{focus.analytics.dailyGoalMinutes} мин ·{' '}
+                {focus.analytics.stateMeta.emoji} {focus.analytics.stateMeta.shortLabel} (
+                {focus.analytics.disciplineScore})
               </Text>
+
+              <RipplePressable
+                onPress={() => {
+                  setSheetOpen(false);
+                  router.navigate('/focus' as never);
+                }}
+                style={StyleSheet.flatten([
+                  styles.openFullPageBtn,
+                  { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
+                ])}>
+                <AppIcon name="maximize" size="xs" color={colors.text} />
+                <Text style={[styles.openFullPageText, { color: colors.text }]}>
+                  Открыть полную страницу и графики
+                </Text>
+              </RipplePressable>
             </View>
           </Animated.View>
         </View>
@@ -588,6 +655,72 @@ export function FocusMobileTrigger() {
         onClose={() => setPickerOpen(false)}
       />
     </>
+  );
+}
+
+export function FocusAbandonGuardModal() {
+  const colors = useThemeColors();
+  const focus = useFocus();
+  const pending = focus.pendingAbandon;
+
+  if (!pending) {
+    return null;
+  }
+
+  const elapsedMin = Math.max(1, Math.round(pending.elapsedSeconds / 60));
+  const penalty = focus.analytics.consecutiveAbandons >= 1 ? 18 : 12;
+
+  return (
+    <Modal visible transparent animationType="none" onRequestClose={focus.cancelAbandon}>
+      <View style={styles.guardRoot}>
+        <Pressable style={styles.backdrop} onPress={focus.cancelAbandon} />
+        <Animated.View
+          entering={FadeIn.duration(130)}
+          style={[
+            styles.guardCard,
+            { backgroundColor: colors.surface, borderColor: colors.line },
+          ]}>
+          <View style={[styles.guardIconWrap, { backgroundColor: colors.dangerBg }]}>
+            <AppIcon name="timer" size="md" color={colors.danger} />
+          </View>
+          <Text style={[styles.guardTitle, { color: colors.text }]}>Бросить текущую сессию?</Text>
+          <Text style={[styles.guardBody, { color: colors.muted }]}>
+            Прошло {elapsedMin} мин. Если прервать сейчас, запись попадёт в срывы: индекс
+            дисциплины снизится на −{penalty}
+            {focus.analytics.currentCombo > 0
+              ? `, а текущее комбо (×${focus.analytics.currentCombo}) обнулится`
+              : ''}
+            .
+          </Text>
+
+          <View style={styles.guardActions}>
+            <RipplePressable
+              onPress={focus.cancelAbandon}
+              style={StyleSheet.flatten([
+                styles.guardPrimaryBtn,
+                { backgroundColor: colors.accent },
+              ])}>
+              <Text style={[styles.guardPrimaryText, { color: colors.accentText }]}>
+                Продолжить фокус
+              </Text>
+            </RipplePressable>
+
+            <RipplePressable
+              onPress={() => {
+                focus.confirmAbandon();
+              }}
+              style={StyleSheet.flatten([
+                styles.guardDangerBtn,
+                { backgroundColor: colors.dangerBg },
+              ])}>
+              <Text style={[styles.guardDangerText, { color: colors.danger }]}>
+                Всё равно бросить
+              </Text>
+            </RipplePressable>
+          </View>
+        </Animated.View>
+      </View>
+    </Modal>
   );
 }
 
@@ -927,5 +1060,88 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 13,
     paddingVertical: 20,
+  },
+  disciplineMiniTag: {
+    fontSize: 11,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  headerMiniIconBtn: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  openFullPageBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    height: 40,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  openFullPageText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  guardRoot: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  guardCard: {
+    width: '100%',
+    maxWidth: 380,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 20,
+    gap: 10,
+    alignItems: 'center',
+  },
+  guardIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 2,
+  },
+  guardTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  guardBody: {
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: 'center',
+  },
+  guardActions: {
+    width: '100%',
+    gap: 8,
+    marginTop: 6,
+  },
+  guardPrimaryBtn: {
+    height: 42,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  guardPrimaryText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  guardDangerBtn: {
+    height: 40,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  guardDangerText: {
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

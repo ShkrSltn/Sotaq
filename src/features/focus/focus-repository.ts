@@ -1,13 +1,16 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 import { createId, nowIso } from '@/db/client';
-import type {
-  FocusLinkTarget,
-  FocusMode,
-  FocusSessionRecord,
-  FocusStats,
+import { computeFocusAnalytics } from '@/features/focus/focus-analytics';
+import {
+  DEFAULT_FOCUS_SETTINGS,
+  type FocusAnalytics,
+  type FocusLinkTarget,
+  type FocusMode,
+  type FocusSessionRecord,
+  type FocusSettings,
+  type FocusStats,
 } from '@/features/focus/types';
-import { addDaysDateKey, toDateKey } from '@/features/kanban/types';
 
 type SessionRow = {
   id: string;
@@ -21,6 +24,17 @@ type SessionRow = {
   linked_title: string;
   started_at: string;
   ended_at: string;
+};
+
+type SettingsRow = {
+  user_id: string;
+  focus_minutes: number;
+  short_break_minutes: number;
+  long_break_minutes: number;
+  daily_goal_minutes: number;
+  sound_enabled: number;
+  auto_start_breaks: number;
+  updated_at: string;
 };
 
 function normalizeMode(raw: string): FocusMode {
@@ -45,6 +59,66 @@ function mapSession(row: SessionRow): FocusSessionRecord {
     startedAt: row.started_at,
     endedAt: row.ended_at,
   };
+}
+
+export async function getFocusSettings(
+  db: SQLiteDatabase,
+  userId: string,
+): Promise<FocusSettings> {
+  const row = await db.getFirstAsync<SettingsRow>(
+    `SELECT * FROM focus_settings WHERE user_id = ? LIMIT 1;`,
+    userId,
+  );
+  if (!row) {
+    return { ...DEFAULT_FOCUS_SETTINGS };
+  }
+  return {
+    focusMinutes: Math.max(5, Math.min(120, row.focus_minutes)),
+    shortBreakMinutes: Math.max(1, Math.min(30, row.short_break_minutes)),
+    longBreakMinutes: Math.max(5, Math.min(60, row.long_break_minutes)),
+    dailyGoalMinutes: Math.max(15, Math.min(600, row.daily_goal_minutes)),
+    soundEnabled: row.sound_enabled === 1,
+    autoStartBreaks: row.auto_start_breaks === 1,
+  };
+}
+
+export async function upsertFocusSettings(
+  db: SQLiteDatabase,
+  userId: string,
+  next: FocusSettings,
+): Promise<FocusSettings> {
+  const clean: FocusSettings = {
+    focusMinutes: Math.max(5, Math.min(120, Math.round(next.focusMinutes))),
+    shortBreakMinutes: Math.max(1, Math.min(30, Math.round(next.shortBreakMinutes))),
+    longBreakMinutes: Math.max(5, Math.min(60, Math.round(next.longBreakMinutes))),
+    dailyGoalMinutes: Math.max(15, Math.min(600, Math.round(next.dailyGoalMinutes))),
+    soundEnabled: Boolean(next.soundEnabled),
+    autoStartBreaks: Boolean(next.autoStartBreaks),
+  };
+
+  await db.runAsync(
+    `INSERT INTO focus_settings
+       (user_id, focus_minutes, short_break_minutes, long_break_minutes, daily_goal_minutes, sound_enabled, auto_start_breaks, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET
+       focus_minutes = excluded.focus_minutes,
+       short_break_minutes = excluded.short_break_minutes,
+       long_break_minutes = excluded.long_break_minutes,
+       daily_goal_minutes = excluded.daily_goal_minutes,
+       sound_enabled = excluded.sound_enabled,
+       auto_start_breaks = excluded.auto_start_breaks,
+       updated_at = excluded.updated_at;`,
+    userId,
+    clean.focusMinutes,
+    clean.shortBreakMinutes,
+    clean.longBreakMinutes,
+    clean.dailyGoalMinutes,
+    clean.soundEnabled ? 1 : 0,
+    clean.autoStartBreaks ? 1 : 0,
+    nowIso(),
+  );
+
+  return clean;
 }
 
 export async function saveFocusSession(
@@ -78,46 +152,42 @@ export async function saveFocusSession(
   );
 }
 
-export async function getFocusStats(db: SQLiteDatabase, userId: string): Promise<FocusStats> {
+export async function deleteFocusSession(
+  db: SQLiteDatabase,
+  userId: string,
+  sessionId: string,
+): Promise<void> {
+  await db.runAsync(
+    `DELETE FROM focus_sessions WHERE id = ? AND user_id = ?;`,
+    sessionId,
+    userId,
+  );
+}
+
+export async function getFocusAnalytics(
+  db: SQLiteDatabase,
+  userId: string,
+  dailyGoalMinutes: number,
+): Promise<FocusAnalytics> {
   const rows = await db.getAllAsync<SessionRow>(
     `SELECT * FROM focus_sessions
      WHERE user_id = ? AND mode = 'focus'
      ORDER BY ended_at DESC
-     LIMIT 120;`,
+     LIMIT 500;`,
     userId,
   );
 
-  const todayKey = toDateKey(new Date());
-  const weekStartKey = addDaysDateKey(-6);
+  return computeFocusAnalytics(rows.map(mapSession), dailyGoalMinutes);
+}
 
-  let todaySeconds = 0;
-  let todaySessions = 0;
-  let weekSeconds = 0;
-  let weekSessions = 0;
-
-  const mapped = rows.map(mapSession);
-  for (const session of mapped) {
-    const dateKey = session.endedAt.slice(0, 10);
-    if (dateKey === todayKey) {
-      todaySeconds += session.elapsedSeconds;
-      if (session.completed || session.elapsedSeconds >= 60) {
-        todaySessions += 1;
-      }
-    }
-    if (dateKey >= weekStartKey) {
-      weekSeconds += session.elapsedSeconds;
-      if (session.completed || session.elapsedSeconds >= 60) {
-        weekSessions += 1;
-      }
-    }
-  }
-
+export function deriveFocusStats(analytics: FocusAnalytics): FocusStats {
   return {
-    todayMinutes: Math.round(todaySeconds / 60),
-    todaySessions,
-    weekMinutes: Math.round(weekSeconds / 60),
-    weekSessions,
-    recentSessions: mapped.slice(0, 10),
+    todayMinutes: analytics.todayCompletedMinutes,
+    todaySessions: analytics.todayCompletedSessions,
+    todayAbandoned: analytics.todayAbandonedSessions,
+    weekMinutes: analytics.weekCompletedMinutes,
+    weekSessions: analytics.weekCompletedSessions,
+    recentSessions: analytics.recentSessions.slice(0, 10),
   };
 }
 

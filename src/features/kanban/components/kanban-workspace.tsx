@@ -26,7 +26,11 @@ import { HistoryToast, UndoRedoButtons } from '@/components/undo-redo-bar';
 import { WebDragBox, type WebDomDragEvent } from '@/components/web-drag-box';
 import { useDatabase } from '@/db/provider';
 import { useAuth } from '@/features/auth/auth-context';
-import { BoardDialog, ColumnDialog } from '@/features/kanban/components/board-dialogs';
+import {
+  BoardDialog,
+  ColumnDialog,
+  ColumnsManagerDialog,
+} from '@/features/kanban/components/board-dialogs';
 import { CardDetailModal } from '@/features/kanban/components/card-detail-modal';
 import { CreateCardModal } from '@/features/kanban/components/create-card-modal';
 import {
@@ -155,6 +159,7 @@ export function KanbanWorkspace() {
     mode: 'create',
     column: null,
   });
+  const [columnsManagerOpen, setColumnsManagerOpen] = useState(false);
 
   const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
   const [cardDropTarget, setCardDropTarget] = useState<CardDropTarget | null>(null);
@@ -550,6 +555,31 @@ export function KanbanWorkspace() {
     await refreshBoard(activeBoardId);
   }
 
+  async function handleMoveColumnStep(columnId: string, direction: -1 | 1) {
+    if (!activeBoardId || columns.length < 2) {
+      return;
+    }
+    const currentIdx = columns.findIndex((col) => col.id === columnId);
+    const nextIdx = currentIdx + direction;
+    if (currentIdx === -1 || nextIdx < 0 || nextIdx >= columns.length) {
+      return;
+    }
+    const orderedIds = columns.map((col) => col.id);
+    const [moved] = orderedIds.splice(currentIdx, 1);
+    orderedIds.splice(nextIdx, 0, moved);
+
+    pushBoardHistory('Порядок колонок');
+    await reorderColumns(db, activeBoardId, orderedIds);
+    await refreshBoard(activeBoardId);
+    if (!isDesktop) {
+      setActiveColumnIndex(nextIdx);
+      mobilePagerRef.current?.scrollTo({
+        x: nextIdx * mobileSnapInterval,
+        animated: true,
+      });
+    }
+  }
+
   async function handleReorderCard(cardId: string, direction: -1 | 1) {
     if (!activeBoardId) {
       return;
@@ -867,180 +897,218 @@ export function KanbanWorkspace() {
 
   return (
     <View style={[styles.screen, isDesktop ? styles.screenDesktop : styles.screenMobile]}>
-      {/* Top Toolbar: Clean Linear-style Board Selector + Grouped Controls */}
-      <View style={styles.toolbar}>
-        {!isDesktop && mobileSearchOpen ? (
-          <MobileSearchBar
-            value={search}
-            onChangeText={handleMobileSearchChange}
-            onCancel={() => {
-              setSearch('');
-              setMobileSearchOpen(false);
-            }}
-            placeholder="Поиск карточек…"
-            colors={colors}
-            matchCount={filteredCards.length}
-          />
-        ) : (
-          <>
-            <View style={styles.toolbarLeft}>
-              <View ref={boardMenuBtnRef} collapsable={false}>
+      {/* Top Header: Desktop Toolbar vs Grouped Mobile Header + Underline Column Tabs */}
+      {isDesktop ? (
+        <View style={styles.toolbar}>
+          <View style={styles.toolbarLeft}>
+            <View ref={boardMenuBtnRef} collapsable={false}>
+              <RipplePressable
+                accessibilityLabel="Выбрать или настроить доску"
+                onPress={() => {
+                  if (boardMenuOpen) {
+                    setBoardMenuOpen(false);
+                    return;
+                  }
+                  measureAnchor(boardMenuBtnRef.current, (rect) => {
+                    setBoardMenuAnchor(rect);
+                    setBoardMenuOpen(true);
+                  });
+                }}
+                style={StyleSheet.flatten([
+                  styles.boardSwitcherBtn,
+                  {
+                    backgroundColor: boardMenuOpen ? colors.surfaceActive : colors.surface,
+                    borderColor: boardMenuOpen ? colors.text : colors.line,
+                  },
+                ])}>
+                <AppIcon name="kanban" size="sm" color={colors.muted} />
+                <Text
+                  style={[styles.boardSwitcherTitle, { color: colors.text }]}
+                  numberOfLines={1}>
+                  {boardData.board.title}
+                </Text>
+                <AppIcon name="chevronDown" size="xs" color={colors.muted} />
+              </RipplePressable>
+            </View>
+
+            <Text style={[styles.boardCountMeta, { color: colors.muted }]}>
+              {hasActiveFilters
+                ? `${filteredCards.length} из ${allCards.length}`
+                : `${allCards.length} ${allCards.length === 1 ? 'задача' : allCards.length >= 2 && allCards.length <= 4 ? 'задачи' : 'задач'}`}
+            </Text>
+          </View>
+
+          <View style={styles.toolbarRight}>
+            {/* Group 1: Search & Filter */}
+            <View style={styles.toolbarGroup}>
+              <View
+                style={[
+                  styles.searchBox,
+                  { backgroundColor: colors.surface, borderColor: colors.line },
+                ]}>
+                <AppIcon name="search" size="xs" color={colors.muted} />
+                <TextInput
+                  value={search}
+                  onChangeText={setSearch}
+                  placeholder="Поиск…"
+                  placeholderTextColor={colors.muted}
+                  style={[styles.searchInput, { color: colors.text }]}
+                />
+                {search.length > 0 ? (
+                  <RipplePressable onPress={() => setSearch('')} style={styles.clearBtn}>
+                    <AppIcon name="close" size="xs" color={colors.muted} />
+                  </RipplePressable>
+                ) : null}
+              </View>
+
+              <View ref={filterMenuBtnRef} collapsable={false}>
                 <RipplePressable
-                  accessibilityLabel="Выбрать или настроить доску"
+                  accessibilityLabel="Фильтр по приоритету"
                   onPress={() => {
-                    if (boardMenuOpen) {
-                      setBoardMenuOpen(false);
+                    if (filterMenuOpen) {
+                      setFilterMenuOpen(false);
                       return;
                     }
-                    measureAnchor(boardMenuBtnRef.current, (rect) => {
-                      setBoardMenuAnchor(rect);
-                      setBoardMenuOpen(true);
+                    measureAnchor(filterMenuBtnRef.current, (rect) => {
+                      setFilterMenuAnchor(rect);
+                      setFilterMenuOpen(true);
                     });
                   }}
                   style={StyleSheet.flatten([
-                    styles.boardSwitcherBtn,
+                    styles.filterTriggerBtn,
                     {
-                      backgroundColor: boardMenuOpen ? colors.surfaceActive : colors.surface,
-                      borderColor: boardMenuOpen ? colors.text : colors.line,
+                      backgroundColor:
+                        priorityFilter !== 'all' || filterMenuOpen
+                          ? colors.surfaceActive
+                          : colors.surface,
+                      borderColor:
+                        priorityFilter !== 'all' || filterMenuOpen
+                          ? colors.text
+                          : colors.line,
                     },
                   ])}>
-                  <AppIcon name="kanban" size="sm" color={colors.muted} />
-                  <Text
-                    style={[styles.boardSwitcherTitle, { color: colors.text }]}
-                    numberOfLines={1}>
-                    {boardData.board.title}
-                  </Text>
-                  <AppIcon name="chevronDown" size="xs" color={colors.muted} />
-                </RipplePressable>
-              </View>
-
-              {isDesktop ? (
-                <Text style={[styles.boardCountMeta, { color: colors.muted }]}>
-                  {hasActiveFilters
-                    ? `${filteredCards.length} из ${allCards.length}`
-                    : `${allCards.length} ${allCards.length === 1 ? 'задача' : allCards.length >= 2 && allCards.length <= 4 ? 'задачи' : 'задач'}`}
-                </Text>
-              ) : null}
-            </View>
-
-            <View style={styles.toolbarRight}>
-              {isDesktop ? (
-                <>
-                  {/* Group 1: Search & Filter */}
-                  <View style={styles.toolbarGroup}>
+                  {priorityFilter !== 'all' ? (
                     <View
                       style={[
-                        styles.searchBox,
-                        { backgroundColor: colors.surface, borderColor: colors.line },
-                      ]}>
-                      <AppIcon name="search" size="xs" color={colors.muted} />
-                      <TextInput
-                        value={search}
-                        onChangeText={setSearch}
-                        placeholder="Поиск…"
-                        placeholderTextColor={colors.muted}
-                        style={[styles.searchInput, { color: colors.text }]}
-                      />
-                      {search.length > 0 ? (
-                        <RipplePressable onPress={() => setSearch('')} style={styles.clearBtn}>
-                          <AppIcon name="close" size="xs" color={colors.muted} />
-                        </RipplePressable>
-                      ) : null}
-                    </View>
+                        styles.filterDot,
+                        { backgroundColor: PRIORITY_META[priorityFilter].dotColor },
+                      ]}
+                    />
+                  ) : (
+                    <AppIcon name="filter" size="xs" color={colors.muted} />
+                  )}
+                  <Text
+                    style={[
+                      styles.filterTriggerText,
+                      { color: priorityFilter !== 'all' ? colors.text : colors.muted },
+                    ]}>
+                    {priorityFilter === 'all'
+                      ? 'Приоритет'
+                      : PRIORITY_META[priorityFilter].label}
+                  </Text>
+                  {priorityFilter !== 'all' ? (
+                    <Pressable
+                      accessibilityLabel="Сбросить фильтр"
+                      hitSlop={6}
+                      onPress={(event) => {
+                        event.stopPropagation?.();
+                        setPriorityFilter('all');
+                      }}
+                      style={styles.filterResetHit}>
+                      <AppIcon name="close" size={11} color={colors.muted} />
+                    </Pressable>
+                  ) : (
+                    <AppIcon name="chevronDown" size={11} color={colors.muted} />
+                  )}
+                </RipplePressable>
+              </View>
+            </View>
 
-                    <View ref={filterMenuBtnRef} collapsable={false}>
-                      <RipplePressable
-                        accessibilityLabel="Фильтр по приоритету"
-                        onPress={() => {
-                          if (filterMenuOpen) {
-                            setFilterMenuOpen(false);
-                            return;
-                          }
-                          measureAnchor(filterMenuBtnRef.current, (rect) => {
-                            setFilterMenuAnchor(rect);
-                            setFilterMenuOpen(true);
-                          });
-                        }}
-                        style={StyleSheet.flatten([
-                          styles.filterTriggerBtn,
-                          {
-                            backgroundColor:
-                              priorityFilter !== 'all' || filterMenuOpen
-                                ? colors.surfaceActive
-                                : colors.surface,
-                            borderColor:
-                              priorityFilter !== 'all' || filterMenuOpen
-                                ? colors.text
-                                : colors.line,
-                          },
-                        ])}>
-                        {priorityFilter !== 'all' ? (
-                          <View
-                            style={[
-                              styles.filterDot,
-                              { backgroundColor: PRIORITY_META[priorityFilter].dotColor },
-                            ]}
-                          />
-                        ) : (
-                          <AppIcon name="filter" size="xs" color={colors.muted} />
-                        )}
-                        <Text
-                          style={[
-                            styles.filterTriggerText,
-                            { color: priorityFilter !== 'all' ? colors.text : colors.muted },
-                          ]}>
-                          {priorityFilter === 'all'
-                            ? 'Приоритет'
-                            : PRIORITY_META[priorityFilter].label}
-                        </Text>
-                        {priorityFilter !== 'all' ? (
-                          <Pressable
-                            accessibilityLabel="Сбросить фильтр"
-                            hitSlop={6}
-                            onPress={(event) => {
-                              event.stopPropagation?.();
-                              setPriorityFilter('all');
-                            }}
-                            style={styles.filterResetHit}>
-                            <AppIcon name="close" size={11} color={colors.muted} />
-                          </Pressable>
-                        ) : (
-                          <AppIcon name="chevronDown" size={11} color={colors.muted} />
-                        )}
-                      </RipplePressable>
-                    </View>
+            <View style={[styles.toolbarDivider, { backgroundColor: colors.line }]} />
+
+            {/* Group 2: History */}
+            <UndoRedoButtons
+              canUndo={historyMeta.canUndo}
+              canRedo={historyMeta.canRedo}
+              colors={colors}
+              onUndo={() => {
+                handleUndoBoard();
+              }}
+              onRedo={() => {
+                handleRedoBoard();
+              }}
+            />
+
+            <View style={[styles.toolbarDivider, { backgroundColor: colors.line }]} />
+
+            {/* Group 3: Add Column */}
+            <RipplePressable
+              onPress={() => setColumnDialog({ open: true, mode: 'create', column: null })}
+              style={StyleSheet.flatten([
+                styles.addColBtn,
+                { backgroundColor: colors.surface, borderColor: colors.line },
+              ])}>
+              <AppIcon name="plus" size="xs" color={colors.muted} />
+              <Text style={[styles.addColLabel, { color: colors.text }]}>Колонка</Text>
+            </RipplePressable>
+          </View>
+        </View>
+      ) : (
+        <View style={[styles.mobileHeaderBlock, { borderBottomColor: colors.line }]}>
+          <View style={styles.mobileTopRow}>
+            {mobileSearchOpen ? (
+              <MobileSearchBar
+                value={search}
+                onChangeText={handleMobileSearchChange}
+                onCancel={() => {
+                  setSearch('');
+                  setMobileSearchOpen(false);
+                }}
+                placeholder="Поиск карточек…"
+                colors={colors}
+                matchCount={filteredCards.length}
+              />
+            ) : (
+              <>
+                <View style={styles.toolbarLeft}>
+                  <View ref={boardMenuBtnRef} collapsable={false}>
+                    <RipplePressable
+                      accessibilityLabel="Выбрать или настроить доску"
+                      onPress={() => {
+                        if (boardMenuOpen) {
+                          setBoardMenuOpen(false);
+                          return;
+                        }
+                        measureAnchor(boardMenuBtnRef.current, (rect) => {
+                          setBoardMenuAnchor(rect);
+                          setBoardMenuOpen(true);
+                        });
+                      }}
+                      style={StyleSheet.flatten([
+                        styles.mobileBoardTrigger,
+                        {
+                          backgroundColor: boardMenuOpen ? colors.surfaceActive : 'transparent',
+                        },
+                      ])}>
+                      <Text
+                        style={[styles.mobileBoardTitle, { color: colors.text }]}
+                        numberOfLines={1}>
+                        {boardData.board.title}
+                      </Text>
+                      <AppIcon name="chevronDown" size="xs" color={colors.muted} />
+                    </RipplePressable>
                   </View>
 
-                  <View style={[styles.toolbarDivider, { backgroundColor: colors.line }]} />
+                  <View style={[styles.mobileTotalBadge, { backgroundColor: colors.surfaceSubtle }]}>
+                    <Text style={[styles.mobileTotalBadgeText, { color: colors.muted }]}>
+                      {hasActiveFilters
+                        ? `${filteredCards.length}/${allCards.length}`
+                        : allCards.length}
+                    </Text>
+                  </View>
+                </View>
 
-                  {/* Group 2: History */}
-                  <UndoRedoButtons
-                    canUndo={historyMeta.canUndo}
-                    canRedo={historyMeta.canRedo}
-                    colors={colors}
-                    onUndo={() => {
-                      handleUndoBoard();
-                    }}
-                    onRedo={() => {
-                      handleRedoBoard();
-                    }}
-                  />
-
-                  <View style={[styles.toolbarDivider, { backgroundColor: colors.line }]} />
-
-                  {/* Group 3: Add Column */}
-                  <RipplePressable
-                    onPress={() => setColumnDialog({ open: true, mode: 'create', column: null })}
-                    style={StyleSheet.flatten([
-                      styles.addColBtn,
-                      { backgroundColor: colors.surface, borderColor: colors.line },
-                    ])}>
-                    <AppIcon name="plus" size="xs" color={colors.muted} />
-                    <Text style={[styles.addColLabel, { color: colors.text }]}>Колонка</Text>
-                  </RipplePressable>
-                </>
-              ) : (
-                <>
+                <View style={styles.mobileToolbarRight}>
                   {historyMeta.canUndo || historyMeta.canRedo ? (
                     <UndoRedoButtons
                       compact
@@ -1070,14 +1138,16 @@ export function KanbanWorkspace() {
                         });
                       }}
                       style={StyleSheet.flatten([
-                        styles.iconPill,
+                        styles.mobileIconBtn,
                         {
                           backgroundColor:
                             priorityFilter !== 'all' || filterMenuOpen
                               ? colors.surfaceActive
-                              : colors.surface,
+                              : colors.surfaceSubtle,
                           borderColor:
-                            priorityFilter !== 'all' || filterMenuOpen ? colors.text : colors.line,
+                            priorityFilter !== 'all' || filterMenuOpen
+                              ? colors.text
+                              : 'transparent',
                         },
                       ])}>
                       {priorityFilter !== 'all' ? (
@@ -1097,90 +1167,130 @@ export function KanbanWorkspace() {
                     accessibilityLabel="Поиск карточек"
                     onPress={() => setMobileSearchOpen(true)}
                     style={StyleSheet.flatten([
-                      styles.iconPill,
+                      styles.mobileIconBtn,
                       {
-                        backgroundColor: colors.surface,
-                        borderColor: colors.line,
+                        backgroundColor: colors.surfaceSubtle,
+                        borderColor: 'transparent',
                       },
                     ])}>
                     <AppIcon name="search" size="sm" color={colors.muted} />
                   </RipplePressable>
-                </>
-              )}
-            </View>
-          </>
-        )}
-      </View>
 
-      {/* Mobile active priority dismissible chip */}
-      {!isDesktop && priorityFilter !== 'all' ? (
-        <View style={styles.mobileActiveFilterRow}>
-          <RipplePressable
-            onPress={() => setPriorityFilter('all')}
-            style={StyleSheet.flatten([
-              styles.mobileActiveChip,
-              { backgroundColor: colors.surface, borderColor: colors.line },
-            ])}>
-            <View
-              style={[
-                styles.filterDot,
-                { backgroundColor: PRIORITY_META[priorityFilter].dotColor },
-              ]}
-            />
-            <Text style={[styles.mobileActiveChipText, { color: colors.text }]}>
-              Приоритет: {PRIORITY_META[priorityFilter].label}
-            </Text>
-            <AppIcon name="close" size={11} color={colors.muted} />
-          </RipplePressable>
-        </View>
-      ) : null}
+                  <RipplePressable
+                    accessibilityLabel="Создать карточку"
+                    onPress={() =>
+                      setCreateCardModal({
+                        open: true,
+                        columnId: columns[activeColumnIndex]?.id ?? columns[0]?.id ?? null,
+                      })
+                    }
+                    style={StyleSheet.flatten([
+                      styles.mobileAddCardBtn,
+                      { backgroundColor: colors.accent },
+                    ])}>
+                    <AppIcon name="plus" size="sm" color={colors.accentText} />
+                  </RipplePressable>
+                </View>
+              </>
+            )}
+          </View>
 
-      {/* Mobile Column Quick-Switcher Tabs */}
-      {!isDesktop ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.mobileTabsScroll}
-          contentContainerStyle={styles.mobileTabsRow}>
-          {columns.map((column, index) => {
-            const active = index === activeColumnIndex;
-            const count = filteredCards.filter((card) => card.columnId === column.id).length;
-            const dimmed = hasActiveFilters && count === 0 && !active;
-            return (
+          {/* Mobile active priority dismissible chip */}
+          {priorityFilter !== 'all' ? (
+            <View style={styles.mobileActiveFilterRow}>
               <RipplePressable
-                key={column.id}
-                onPress={() => jumpToMobileColumn(index)}
+                onPress={() => setPriorityFilter('all')}
                 style={StyleSheet.flatten([
-                  styles.mobileColTab,
-                  {
-                    backgroundColor: active ? colors.surface : 'transparent',
-                    borderColor: active ? colors.line : 'transparent',
-                  },
-                  dimmed ? styles.mobileColTabDimmed : null,
+                  styles.mobileActiveChip,
+                  { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
                 ])}>
-                <View style={[styles.colAccentDot, { backgroundColor: column.accent }]} />
-                <Text
+                <View
                   style={[
-                    styles.mobileColTabTitle,
-                    { color: active ? colors.text : colors.muted },
-                  ]}>
-                  {column.title}
+                    styles.filterDot,
+                    { backgroundColor: PRIORITY_META[priorityFilter].dotColor },
+                  ]}
+                />
+                <Text style={[styles.mobileActiveChipText, { color: colors.text }]}>
+                  Приоритет: {PRIORITY_META[priorityFilter].label}
                 </Text>
-                <Text
-                  style={[
-                    styles.mobileColTabCount,
-                    {
-                      color:
-                        hasActiveFilters && count > 0 ? colors.text : colors.muted,
-                    },
-                  ]}>
-                  {count}
-                </Text>
+                <AppIcon name="close" size={11} color={colors.muted} />
               </RipplePressable>
-            );
-          })}
-        </ScrollView>
-      ) : null}
+            </View>
+          ) : null}
+
+          {/* Mobile Underline Column Tabs + Columns Manager Button */}
+          <View style={styles.mobileTabsBar}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.mobileTabsScroll}
+              contentContainerStyle={styles.mobileTabsRow}>
+              {columns.map((column, index) => {
+                const active = index === activeColumnIndex;
+                const count = filteredCards.filter((card) => card.columnId === column.id).length;
+                const dimmed = hasActiveFilters && count === 0 && !active;
+                return (
+                  <Pressable
+                    key={column.id}
+                    onPress={() => jumpToMobileColumn(index)}
+                    style={[
+                      styles.mobileColTab,
+                      dimmed ? styles.mobileColTabDimmed : null,
+                    ]}>
+                    <View style={styles.mobileColTabInner}>
+                      <View style={[styles.colAccentDot, { backgroundColor: column.accent }]} />
+                      <Text
+                        style={[
+                          styles.mobileColTabTitle,
+                          { color: active ? colors.text : colors.muted },
+                          active ? styles.mobileColTabTitleActive : null,
+                        ]}>
+                        {column.title}
+                      </Text>
+                      <View
+                        style={[
+                          styles.mobileColCountPill,
+                          {
+                            backgroundColor: active ? colors.surfaceActive : colors.surfaceSubtle,
+                          },
+                        ]}>
+                        <Text
+                          style={[
+                            styles.mobileColTabCount,
+                            {
+                              color:
+                                active || (hasActiveFilters && count > 0)
+                                  ? colors.text
+                                  : colors.muted,
+                            },
+                          ]}>
+                          {count}
+                        </Text>
+                      </View>
+                    </View>
+                    <View
+                      style={[
+                        styles.mobileColTabIndicator,
+                        { backgroundColor: active ? column.accent : 'transparent' },
+                      ]}
+                    />
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            <RipplePressable
+              accessibilityLabel="Управлять порядком и списком колонок"
+              onPress={() => setColumnsManagerOpen(true)}
+              style={StyleSheet.flatten([
+                styles.mobileManageColsBtn,
+                { backgroundColor: colors.surfaceSubtle },
+              ])}>
+              <AppIcon name="reorder" size={13} color={colors.muted} />
+            </RipplePressable>
+          </View>
+        </View>
+      )}
 
       {/* Columns Area */}
       <View style={styles.boardBody}>
@@ -1405,7 +1515,7 @@ export function KanbanWorkspace() {
                 styles.popoverRow,
                 hovered ? { backgroundColor: colors.surfaceSubtle } : null,
               ]}>
-              <AppIcon name="plus" size="xs" color={colors.muted} />
+              <AppIcon name="folder" size="xs" color={colors.muted} />
               <Text style={[styles.popoverLabel, { color: colors.text }]}>Новая доска</Text>
             </Pressable>
 
@@ -1428,15 +1538,15 @@ export function KanbanWorkspace() {
               <Pressable
                 onPress={() => {
                   setBoardMenuOpen(false);
-                  setColumnDialog({ open: true, mode: 'create', column: null });
+                  setColumnsManagerOpen(true);
                 }}
                 style={({ hovered }: { hovered?: boolean }) => [
                   styles.popoverRow,
                   hovered ? { backgroundColor: colors.surfaceSubtle } : null,
                 ]}>
-                <AppIcon name="plus" size="xs" color={colors.muted} />
+                <AppIcon name="sidebar" size="xs" color={colors.muted} />
                 <Text style={[styles.popoverLabel, { color: colors.text }]}>
-                  Добавить колонку
+                  Колонки и порядок
                 </Text>
               </Pressable>
             ) : null}
@@ -1545,6 +1655,19 @@ export function KanbanWorkspace() {
         onClose={() => setColumnDialog((prev) => ({ ...prev, open: false }))}
         onSubmit={handleColumnSubmit}
         onDelete={handleColumnDelete}
+      />
+
+      <ColumnsManagerDialog
+        visible={columnsManagerOpen}
+        columns={columns}
+        cardCountByColumn={columns.reduce<Record<string, number>>((acc, col) => {
+          acc[col.id] = allCards.filter((card) => card.columnId === col.id).length;
+          return acc;
+        }, {})}
+        onClose={() => setColumnsManagerOpen(false)}
+        onMoveColumn={handleMoveColumnStep}
+        onEditColumn={(col) => setColumnDialog({ open: true, mode: 'edit', column: col })}
+        onCreateColumn={() => setColumnDialog({ open: true, mode: 'create', column: null })}
       />
 
       <DragTrashZone
@@ -1750,58 +1873,64 @@ function KanbanColumnView({
       <View
         style={[
           styles.column,
+          !isDesktop ? styles.columnMobile : null,
           {
             backgroundColor: colors.surface,
             borderColor: isCardDropHere ? DROP_BLUE : colors.line,
           },
           isCardDropHere ? styles.columnDropActive : null,
         ]}>
-        <View style={styles.columnHeader}>
-          <WebDragBox
-            draggable={Platform.OS === 'web' && isDesktop}
-            onDragStart={(event) => {
-              event.stopPropagation();
-              if (event.dataTransfer) {
-                event.dataTransfer.setData('text/sotaq-kanban-column', column.id);
-                event.dataTransfer.effectAllowed = 'move';
-              }
-              onColumnDragStart();
-            }}
-            onDragEnd={() => {
-              onColumnDragEnd();
-            }}
-            style={[styles.columnTitleRow, Platform.OS === 'web' && isDesktop ? styles.columnDragHandle : null]}>
-            {Platform.OS === 'web' && isDesktop ? (
-              <AppIcon name="grip" size="xs" color={colors.muted} />
-            ) : null}
-            <View style={[styles.colAccentDot, { backgroundColor: column.accent }]} />
-            <Text style={[styles.columnTitle, { color: colors.text }]} numberOfLines={1}>
-              {column.title}
-            </Text>
-            <View style={[styles.countPill, { backgroundColor: colors.surfaceSubtle }]}>
-              <Text style={[styles.countText, { color: colors.muted }]}>
-                {hasActiveFilters ? `${cards.length}/${totalCardCount}` : cards.length}
+        {isDesktop ? (
+          <View style={styles.columnHeader}>
+            <WebDragBox
+              draggable={Platform.OS === 'web'}
+              onDragStart={(event) => {
+                event.stopPropagation();
+                if (event.dataTransfer) {
+                  event.dataTransfer.setData('text/sotaq-kanban-column', column.id);
+                  event.dataTransfer.effectAllowed = 'move';
+                }
+                onColumnDragStart();
+              }}
+              onDragEnd={() => {
+                onColumnDragEnd();
+              }}
+              style={[
+                styles.columnTitleRow,
+                Platform.OS === 'web' ? styles.columnDragHandle : null,
+              ]}>
+              {Platform.OS === 'web' ? (
+                <AppIcon name="grip" size="xs" color={colors.muted} />
+              ) : null}
+              <View style={[styles.colAccentDot, { backgroundColor: column.accent }]} />
+              <Text style={[styles.columnTitle, { color: colors.text }]} numberOfLines={1}>
+                {column.title}
               </Text>
-            </View>
-          </WebDragBox>
+              <View style={[styles.countPill, { backgroundColor: colors.surfaceSubtle }]}>
+                <Text style={[styles.countText, { color: colors.muted }]}>
+                  {hasActiveFilters ? `${cards.length}/${totalCardCount}` : cards.length}
+                </Text>
+              </View>
+            </WebDragBox>
 
-          <View style={styles.colHeaderActions}>
-            <RipplePressable
-              accessibilityLabel={`Создать карточку в «${column.title}»`}
-              hitSlop={4}
-              onPress={onOpenCreateModal}
-              style={styles.colMenuBtn}>
-              <AppIcon name="plus" size="sm" color={colors.muted} />
-            </RipplePressable>
-            <RipplePressable
-              accessibilityLabel={`Настроить колонку «${column.title}»`}
-              hitSlop={4}
-              onPress={onEditColumn}
-              style={styles.colMenuBtn}>
-              <AppIcon name="more" size="sm" color={colors.muted} />
-            </RipplePressable>
+            <View style={styles.colHeaderActions}>
+              <RipplePressable
+                accessibilityLabel={`Создать карточку в «${column.title}»`}
+                hitSlop={4}
+                onPress={onOpenCreateModal}
+                style={styles.colMenuBtn}>
+                <AppIcon name="plus" size="sm" color={colors.muted} />
+              </RipplePressable>
+              <RipplePressable
+                accessibilityLabel={`Настроить колонку «${column.title}»`}
+                hitSlop={4}
+                onPress={onEditColumn}
+                style={styles.colMenuBtn}>
+                <AppIcon name="more" size="sm" color={colors.muted} />
+              </RipplePressable>
+            </View>
           </View>
-        </View>
+        ) : null}
 
         <ScrollView
           nestedScrollEnabled
@@ -1923,9 +2052,69 @@ const styles = StyleSheet.create({
   },
   screenMobile: {
     paddingHorizontal: 12,
-    paddingTop: 10,
+    paddingTop: 6,
     paddingBottom: 10,
     gap: 10,
+  },
+  mobileHeaderBlock: {
+    marginHorizontal: -12,
+    paddingHorizontal: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 6,
+  },
+  mobileTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    minHeight: 36,
+  },
+  mobileBoardTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 6,
+    marginLeft: -6,
+    borderRadius: 8,
+    maxWidth: 200,
+  },
+  mobileBoardTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+    flexShrink: 1,
+  },
+  mobileTotalBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  mobileTotalBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  mobileToolbarRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
+  },
+  mobileIconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 9,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mobileAddCardBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   toolbar: {
     flexDirection: 'row',
@@ -2103,33 +2292,61 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
+  mobileTabsBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   mobileTabsScroll: {
-    flexGrow: 0,
+    flex: 1,
+    flexGrow: 1,
+  },
+  mobileManageColsBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
   },
   mobileTabsRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+    alignItems: 'flex-end',
+    gap: 16,
   },
   mobileColTab: {
+    paddingTop: 4,
+    gap: 7,
+  },
+  mobileColTabInner: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
   },
   mobileColTabDimmed: {
     opacity: 0.45,
   },
   mobileColTabTitle: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '500',
+  },
+  mobileColTabTitleActive: {
+    fontWeight: '700',
+  },
+  mobileColCountPill: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 999,
   },
   mobileColTabCount: {
-    fontSize: 12,
+    fontSize: 11,
+    fontWeight: '600',
     fontVariant: ['tabular-nums'],
+  },
+  mobileColTabIndicator: {
+    height: 2,
+    borderRadius: 1,
+    width: '100%',
   },
   boardBody: {
     flex: 1,
@@ -2182,6 +2399,9 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     paddingTop: 12,
     overflow: 'hidden',
+  },
+  columnMobile: {
+    paddingTop: 8,
   },
   columnDropActive: {
     borderWidth: 1.5,

@@ -21,6 +21,7 @@ import {
   hexWithAlpha,
   type KanbanBoardColorDraft,
   type KanbanBoardColorRecord,
+  type KanbanColumnRecord,
 } from '@/features/kanban/types';
 import { useThemeColors } from '@/theme/colors';
 
@@ -600,6 +601,173 @@ function ColumnDialogContent({
   );
 }
 
+type ColumnsManagerDialogProps = {
+  visible: boolean;
+  columns: KanbanColumnRecord[];
+  cardCountByColumn: Record<string, number>;
+  onClose: () => void;
+  onMoveColumn: (columnId: string, direction: -1 | 1) => Promise<void>;
+  onEditColumn: (column: KanbanColumnRecord) => void;
+  onCreateColumn: () => void;
+};
+
+export function ColumnsManagerDialog({
+  visible,
+  columns,
+  cardCountByColumn,
+  onClose,
+  onMoveColumn,
+  onEditColumn,
+  onCreateColumn,
+}: ColumnsManagerDialogProps) {
+  const colors = useThemeColors();
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  if (!visible) {
+    return null;
+  }
+
+  async function handleMove(columnId: string, direction: -1 | 1) {
+    if (busyId) {
+      return;
+    }
+    setBusyId(columnId);
+    try {
+      await onMoveColumn(columnId, direction);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <Modal visible transparent animationType="none" onRequestClose={onClose}>
+      <View style={styles.root}>
+        <Pressable style={styles.backdrop} onPress={onClose} />
+        <Animated.View
+          entering={FadeIn.duration(140)}
+          style={[
+            styles.dialog,
+            styles.boardDialog,
+            { backgroundColor: colors.surface, borderColor: colors.line },
+          ]}>
+          <View style={styles.dialogHeader}>
+            <View style={styles.sectionHeaderText}>
+              <Text style={[styles.title, { color: colors.text }]}>Колонки доски</Text>
+              <Text style={[styles.sectionHint, { color: colors.muted }]}>
+                Меняйте порядок, названия или добавляйте новые колонки
+              </Text>
+            </View>
+            <RipplePressable
+              accessibilityLabel="Закрыть"
+              onPress={onClose}
+              style={StyleSheet.flatten([
+                styles.closeIconBtn,
+                { backgroundColor: colors.surfaceSubtle },
+              ])}>
+              <AppIcon name="close" size="xs" color={colors.muted} />
+            </RipplePressable>
+          </View>
+
+          <ScrollView
+            style={styles.boardScroll}
+            contentContainerStyle={styles.colorRowsList}
+            showsVerticalScrollIndicator={false}>
+            {columns.map((col, index) => {
+              const count = cardCountByColumn[col.id] ?? 0;
+              return (
+                <View
+                  key={col.id}
+                  style={[
+                    styles.columnManagerRow,
+                    {
+                      backgroundColor: colors.surfaceSubtle,
+                      borderColor: colors.line,
+                    },
+                  ]}>
+                  <View style={[styles.colManagerDot, { backgroundColor: col.accent }]} />
+                  <Text
+                    style={[styles.colManagerTitle, { color: colors.text }]}
+                    numberOfLines={1}>
+                    {col.title}
+                  </Text>
+                  <View style={[styles.colManagerCountPill, { backgroundColor: colors.surface }]}>
+                    <Text style={[styles.colManagerCountText, { color: colors.muted }]}>
+                      {count}
+                    </Text>
+                  </View>
+
+                  {columns.length > 1 ? (
+                    <View style={styles.rowReorderGroup}>
+                      <RipplePressable
+                        accessibilityLabel={`Поднять «${col.title}» выше`}
+                        disabled={index === 0 || busyId !== null}
+                        onPress={() => handleMove(col.id, -1)}
+                        style={StyleSheet.flatten([
+                          styles.colManagerIconBtn,
+                          { backgroundColor: colors.surface },
+                          index === 0 ? styles.disabled : null,
+                        ])}>
+                        <AppIcon name="arrowUp" size={13} color={colors.text} />
+                      </RipplePressable>
+                      <RipplePressable
+                        accessibilityLabel={`Опустить «${col.title}» ниже`}
+                        disabled={index === columns.length - 1 || busyId !== null}
+                        onPress={() => handleMove(col.id, 1)}
+                        style={StyleSheet.flatten([
+                          styles.colManagerIconBtn,
+                          { backgroundColor: colors.surface },
+                          index === columns.length - 1 ? styles.disabled : null,
+                        ])}>
+                        <AppIcon name="arrowDown" size={13} color={colors.text} />
+                      </RipplePressable>
+                    </View>
+                  ) : null}
+
+                  <RipplePressable
+                    accessibilityLabel={`Редактировать «${col.title}»`}
+                    onPress={() => {
+                      onClose();
+                      onEditColumn(col);
+                    }}
+                    style={StyleSheet.flatten([
+                      styles.colManagerIconBtn,
+                      { backgroundColor: colors.surface },
+                    ])}>
+                    <AppIcon name="edit" size={13} color={colors.muted} />
+                  </RipplePressable>
+                </View>
+              );
+            })}
+          </ScrollView>
+
+          <View style={[styles.actions, styles.boardFooter, { borderTopColor: colors.line }]}>
+            <RipplePressable
+              onPress={() => {
+                onClose();
+                onCreateColumn();
+              }}
+              style={StyleSheet.flatten([
+                styles.addColorBtn,
+                { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
+              ])}>
+              <AppIcon name="plus" size="xs" color={colors.text} />
+              <Text style={[styles.addColorBtnText, { color: colors.text }]}>
+                Новая колонка
+              </Text>
+            </RipplePressable>
+
+            <RipplePressable
+              onPress={onClose}
+              style={StyleSheet.flatten([styles.btn, { backgroundColor: colors.accent }])}>
+              <Text style={[styles.btnLabel, { color: colors.accentText }]}>Готово</Text>
+            </RipplePressable>
+          </View>
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
 const styles = StyleSheet.create({
   root: {
     flex: 1,
@@ -856,5 +1024,41 @@ const styles = StyleSheet.create({
   },
   disabled: {
     opacity: 0.4,
+  },
+  columnManagerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+    borderRadius: 11,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  colManagerDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+  },
+  colManagerTitle: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  colManagerCountPill: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  colManagerCountText: {
+    fontSize: 11,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  colManagerIconBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

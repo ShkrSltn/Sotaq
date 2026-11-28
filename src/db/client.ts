@@ -34,6 +34,26 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function serializeTransactions(db: SQLiteDatabase): void {
+  const originalWithTx = db.withTransactionAsync.bind(db);
+  let txQueue: Promise<void> = Promise.resolve();
+
+  db.withTransactionAsync = async (task: () => Promise<void>): Promise<void> => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const previous = txQueue;
+    txQueue = previous.then(() => gate);
+    await previous;
+    try {
+      await originalWithTx(task);
+    } finally {
+      release();
+    }
+  };
+}
+
 function wireWebUnloadCleanup() {
   if (
     Platform.OS !== 'web' ||
@@ -84,6 +104,7 @@ async function openAndMigrate(): Promise<InitializedDatabase> {
     throw lastError ?? new Error('Не удалось открыть базу данных SQLite.');
   }
 
+  serializeTransactions(db);
   globalCache.__sotaqDbInstance = db;
   wireWebUnloadCleanup();
 

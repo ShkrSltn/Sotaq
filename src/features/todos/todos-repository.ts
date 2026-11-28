@@ -240,11 +240,48 @@ export async function deleteTodoList(db: SQLiteDatabase, listId: string): Promis
   await db.runAsync('DELETE FROM todo_lists WHERE id = ?;', listId);
 }
 
+export async function reorderTodoLists(
+  db: SQLiteDatabase,
+  userId: string,
+  orderedListIds: string[],
+): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    for (let index = 0; index < orderedListIds.length; index += 1) {
+      await db.runAsync(
+        'UPDATE todo_lists SET position = ? WHERE id = ? AND user_id = ?;',
+        index,
+        orderedListIds[index],
+        userId,
+      );
+    }
+  });
+}
+
+export async function reorderTodos(
+  db: SQLiteDatabase,
+  userId: string,
+  orderedTodoIds: string[],
+): Promise<void> {
+  const now = nowIso();
+  await db.withTransactionAsync(async () => {
+    for (let index = 0; index < orderedTodoIds.length; index += 1) {
+      await db.runAsync(
+        'UPDATE todos SET position = ?, updated_at = ? WHERE id = ? AND user_id = ?;',
+        index,
+        now,
+        orderedTodoIds[index],
+        userId,
+      );
+    }
+  });
+}
+
 export async function createTodo(
   db: SQLiteDatabase,
   userId: string,
   input: {
     title: string;
+    notes?: string;
     listId: string | null;
     priority?: TodoPriority;
     dueDate?: string | null;
@@ -261,11 +298,12 @@ export async function createTodo(
   await db.runAsync(
     `INSERT INTO todos
        (id, user_id, list_id, title, notes, is_done, priority, due_date, position, linked_card_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, '', 0, ?, ?, ?, NULL, ?, ?);`,
+     VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, ?, ?);`,
     id,
     userId,
     input.listId,
     input.title.trim(),
+    input.notes?.trim() ?? '',
     input.priority ?? 'medium',
     input.dueDate ?? null,
     position,
@@ -488,4 +526,48 @@ export async function unlinkTodoFromKanban(db: SQLiteDatabase, todoId: string): 
     nowIso(),
     todoId,
   );
+}
+
+export async function restoreTodoSnapshot(
+  db: SQLiteDatabase,
+  userId: string,
+  snapshot: { lists: TodoListRecord[]; todos: TodoItemRecord[] },
+): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('DELETE FROM todos WHERE user_id = ?;', userId);
+    await db.runAsync('DELETE FROM todo_lists WHERE user_id = ?;', userId);
+
+    for (let idx = 0; idx < snapshot.lists.length; idx += 1) {
+      const list = snapshot.lists[idx];
+      await db.runAsync(
+        'INSERT INTO todo_lists (id, user_id, title, position, created_at) VALUES (?, ?, ?, ?, ?);',
+        list.id,
+        userId,
+        list.title,
+        idx,
+        list.createdAt,
+      );
+    }
+
+    for (let idx = 0; idx < snapshot.todos.length; idx += 1) {
+      const todo = snapshot.todos[idx];
+      await db.runAsync(
+        `INSERT INTO todos
+           (id, user_id, list_id, title, notes, is_done, priority, due_date, position, linked_card_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        todo.id,
+        userId,
+        todo.listId,
+        todo.title,
+        todo.notes,
+        todo.isDone ? 1 : 0,
+        todo.priority,
+        todo.dueDate,
+        idx,
+        todo.linkedCardId,
+        todo.createdAt,
+        todo.updatedAt,
+      );
+    }
+  });
 }

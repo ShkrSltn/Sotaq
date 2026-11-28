@@ -229,8 +229,22 @@ export async function getRoleFeatureMatrix(db: SQLiteDatabase): Promise<RoleFeat
   }>('SELECT role, feature_key, enabled FROM role_features;');
 
   const matrix: RoleFeatureMatrix = {
-    admin: { kanban: true, todos: true, notes: true, language: true },
-    user: { kanban: true, todos: true, notes: true, language: true },
+    admin: {
+      calendar: true,
+      kanban: true,
+      todos: true,
+      habits: true,
+      notes: true,
+      language: true,
+    },
+    user: {
+      calendar: true,
+      kanban: true,
+      todos: true,
+      habits: true,
+      notes: true,
+      language: true,
+    },
   };
 
   for (const row of rows) {
@@ -318,8 +332,10 @@ export async function computeEffectiveFeatures(
   return {
     home: true,
     admin: user.role === 'admin',
+    calendar: overrides.calendar ?? roleFeatures.calendar,
     kanban: overrides.kanban ?? roleFeatures.kanban,
     todos: overrides.todos ?? roleFeatures.todos,
+    habits: overrides.habits ?? roleFeatures.habits,
     notes: overrides.notes ?? roleFeatures.notes,
     language: overrides.language ?? roleFeatures.language,
   };
@@ -489,6 +505,8 @@ export async function deleteUserByAdmin(
     await db.runAsync('DELETE FROM todo_lists WHERE user_id = ?;', targetUserId);
     await db.runAsync('DELETE FROM note_pages WHERE user_id = ?;', targetUserId);
     await db.runAsync('DELETE FROM languages WHERE user_id = ?;', targetUserId);
+    await db.runAsync('DELETE FROM habits WHERE user_id = ?;', targetUserId);
+    await db.runAsync('DELETE FROM focus_sessions WHERE user_id = ?;', targetUserId);
     await db.runAsync('DELETE FROM users WHERE id = ?;', targetUserId);
   });
 }

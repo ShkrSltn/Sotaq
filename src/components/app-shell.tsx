@@ -8,6 +8,10 @@ import { RipplePressable } from '@/components/ripple-pressable';
 import { useDatabaseState } from '@/db/provider';
 import { useAuth } from '@/features/auth/auth-context';
 import {
+  FocusMobileTrigger,
+  FocusSidebarWidget,
+} from '@/features/focus/components/focus-widget';
+import {
   type FeatureDefinition,
   findFeatureByPathname,
   getActiveFeatures,
@@ -131,6 +135,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             ) : null}
           </ScrollView>
 
+          <FocusSidebarWidget />
+
           <View style={[styles.sidebarFooter, { borderTopColor: colors.line }]}>
             <View style={styles.profileRow}>
               <View style={styles.profileInfo}>
@@ -191,6 +197,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </View>
 
         <View style={styles.mobileHeaderRight}>
+          <FocusMobileTrigger />
           <View style={[styles.dbChip, { backgroundColor: colors.surfaceSubtle }]}>
             <View style={[styles.statusDot, { backgroundColor: colors.success }]} />
             <Text style={[styles.dbChipText, { color: colors.text }]} numberOfLines={1}>

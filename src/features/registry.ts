@@ -2,7 +2,15 @@ import type { Href } from 'expo-router';
 
 import type { IconName } from '@/components/app-icon';
 
-export type FeatureKey = 'home' | 'kanban' | 'todos' | 'notes' | 'language' | 'admin';
+export type FeatureKey =
+  | 'home'
+  | 'calendar'
+  | 'kanban'
+  | 'todos'
+  | 'habits'
+  | 'notes'
+  | 'language'
+  | 'admin';
 
 export type FeatureStatus = 'active' | 'planned';
 
@@ -25,9 +33,20 @@ export const FEATURES: readonly FeatureDefinition[] = [
     key: 'home',
     title: 'Главная',
     shortTitle: 'Главная',
-    description: 'Обзор всех модулей и быстрый доступ',
+    description: 'Обзор дня, привычки и быстрый доступ к модулям',
     icon: 'home',
     route: '/',
+    status: 'active',
+    defaultUserEnabled: true,
+    showInMobileBar: true,
+  },
+  {
+    key: 'calendar',
+    title: 'Календарь',
+    shortTitle: 'План',
+    description: 'Недельный и месячный план задач и карточек с дедлайнами',
+    icon: 'calendarDays',
+    route: '/calendar' as Href,
     status: 'active',
     defaultUserEnabled: true,
     showInMobileBar: true,
@@ -55,6 +74,17 @@ export const FEATURES: readonly FeatureDefinition[] = [
     showInMobileBar: true,
   },
   {
+    key: 'habits',
+    title: 'Привычки',
+    shortTitle: 'Привычки',
+    description: 'Минималистичный трекер привычек по дням и серии',
+    icon: 'flame',
+    route: '/habits' as Href,
+    status: 'active',
+    defaultUserEnabled: true,
+    showInMobileBar: true,
+  },
+  {
     key: 'notes',
     title: 'Заметки',
     shortTitle: 'Заметки',
@@ -69,7 +99,7 @@ export const FEATURES: readonly FeatureDefinition[] = [
     key: 'language',
     title: 'Языки',
     shortTitle: 'Языки',
-    description: 'Личный словарь и разбор предложений с ИИ',
+    description: 'Словарь, озвучка, флеш-карточки и разбор предложений',
     icon: 'language',
     route: '/language' as Href,
     status: 'active',

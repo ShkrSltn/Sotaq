@@ -100,8 +100,10 @@ function UserEditorModalContent(props: UserEditorModalProps) {
   >(() => {
     const initial = props.mode === 'edit' ? props.overrides : {};
     return {
+      calendar: toOverrideState(initial.calendar),
       kanban: toOverrideState(initial.kanban),
       todos: toOverrideState(initial.todos),
+      habits: toOverrideState(initial.habits),
       notes: toOverrideState(initial.notes),
       language: toOverrideState(initial.language),
     };

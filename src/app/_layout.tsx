@@ -6,6 +6,7 @@ import { StyleSheet } from 'react-native';
 import { AppShell } from '@/components/app-shell';
 import { DatabaseProvider } from '@/db/provider';
 import { AuthProvider, useAuth } from '@/features/auth/auth-context';
+import { FocusProvider } from '@/features/focus/focus-context';
 import { useResolvedColorScheme } from '@/hooks/use-resolved-color-scheme';
 import { useThemeColors } from '@/theme/colors';
 
@@ -31,11 +32,17 @@ function ProtectedNavigator() {
 
         <Stack.Protected guard={status === 'authenticated'}>
           <Stack.Screen name="index" />
+          <Stack.Protected guard={canAccess('calendar')}>
+            <Stack.Screen name="calendar" />
+          </Stack.Protected>
           <Stack.Protected guard={canAccess('kanban')}>
             <Stack.Screen name="board" />
           </Stack.Protected>
           <Stack.Protected guard={canAccess('todos')}>
             <Stack.Screen name="todos" />
+          </Stack.Protected>
+          <Stack.Protected guard={canAccess('habits')}>
+            <Stack.Screen name="habits" />
           </Stack.Protected>
           <Stack.Protected guard={canAccess('notes')}>
             <Stack.Screen name="notes" />
@@ -62,7 +69,9 @@ export default function RootLayout() {
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
       <DatabaseProvider>
         <AuthProvider>
-          <ProtectedNavigator />
+          <FocusProvider>
+            <ProtectedNavigator />
+          </FocusProvider>
         </AuthProvider>
       </DatabaseProvider>
     </GestureHandlerRootView>

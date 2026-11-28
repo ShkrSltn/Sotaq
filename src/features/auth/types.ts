@@ -15,8 +15,10 @@ export type UserRecord = {
 export type ControllableFeatureKey = Exclude<FeatureKey, 'home' | 'admin'>;
 
 export const CONTROLLABLE_FEATURE_KEYS: readonly ControllableFeatureKey[] = [
+  'calendar',
   'kanban',
   'todos',
+  'habits',
   'notes',
   'language',
 ] as const;

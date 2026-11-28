@@ -26,8 +26,10 @@ export type AuthStatus = 'loading' | 'needs_setup' | 'unauthenticated' | 'authen
 
 const EMPTY_FEATURES: FeatureAccessMap = {
   home: true,
+  calendar: false,
   kanban: false,
   todos: false,
+  habits: false,
   notes: false,
   language: false,
   admin: false,

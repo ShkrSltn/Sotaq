@@ -195,14 +195,12 @@ export function KanbanCardItem({
           cardColor
             ? {
                 backgroundColor: hovered
-                  ? hexWithAlpha(cardColor.color, 0.22)
-                  : hexWithAlpha(cardColor.color, 0.14),
+                  ? hexWithAlpha(cardColor.color, 0.24)
+                  : hexWithAlpha(cardColor.color, 0.16),
                 borderColor:
                   hovered || actionsMenuOpen || priorityMenuOpen
                     ? hexWithAlpha(cardColor.color, 0.55)
-                    : hexWithAlpha(cardColor.color, 0.3),
-                borderLeftWidth: 3.5,
-                borderLeftColor: cardColor.color,
+                    : hexWithAlpha(cardColor.color, 0.32),
               }
             : {
                 backgroundColor: hovered ? colors.surfaceActive : colors.surfaceSubtle,

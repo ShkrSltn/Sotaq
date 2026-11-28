@@ -33,7 +33,7 @@ import { useThemeColors, useViewport } from '@/theme/colors';
 type Props = {
   card: KanbanCardRecord | null;
   columns: KanbanColumnRecord[];
-  boardColors: KanbanBoardColorRecord[];
+  boardColors?: KanbanBoardColorRecord[];
   cardIndex: number;
   columnCardCount: number;
   onClose: () => void;
@@ -44,7 +44,7 @@ type Props = {
       description: string;
       priority: KanbanPriority;
       dueDate: string | null;
-      colorId: string | null;
+      colorId?: string | null;
     },
   ) => Promise<void>;
   onMoveColumn: (cardId: string, targetColumnId: string) => Promise<void>;
@@ -68,7 +68,7 @@ export function CardDetailModal(props: Props) {
 function CardDetailModalContent({
   card,
   columns,
-  boardColors,
+  boardColors = [],
   cardIndex,
   columnCardCount,
   onClose,

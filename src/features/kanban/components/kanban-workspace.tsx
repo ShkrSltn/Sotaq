@@ -50,12 +50,17 @@ import {
   reorderColumns,
   reorderSubtasks,
   restoreBoardSnapshot,
+  saveBoardColors,
   toggleSubtask,
   updateCard,
   updateColumn,
 } from '@/features/kanban/kanban-repository';
 import {
   COLUMN_ACCENTS,
+  getBoardColorDisplayName,
+  hexWithAlpha,
+  type KanbanBoardColorDraft,
+  type KanbanBoardColorRecord,
   type KanbanBoardData,
   type KanbanBoardRecord,
   type KanbanCardRecord,
@@ -122,6 +127,7 @@ export function KanbanWorkspace() {
 
   const [search, setSearch] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all');
+  const [colorFilter, setColorFilter] = useState<'all' | string>('all');
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [boardMenuOpen, setBoardMenuOpen] = useState(false);
   const [boardMenuAnchor, setBoardMenuAnchor] = useState<AnchorRect | null>(null);
@@ -341,6 +347,7 @@ export function KanbanWorkspace() {
     }
     setActiveBoardId(boardId);
     setActiveColumnIndex(0);
+    setColorFilter('all');
     syncHistoryMeta(boardId);
     mobilePagerRef.current?.scrollTo({ x: 0, animated: false });
     const data = await loadBoardData(db, boardId);
@@ -349,13 +356,25 @@ export function KanbanWorkspace() {
 
   const columns = useMemo(() => boardData?.columns ?? [], [boardData?.columns]);
   const allCards = useMemo(() => boardData?.cards ?? [], [boardData?.cards]);
+  const boardColors = useMemo(() => boardData?.colors ?? [], [boardData?.colors]);
+
+  const activeColorFilterId = useMemo(() => {
+    if (colorFilter === 'all') {
+      return 'all';
+    }
+    return boardColors.some((c) => c.id === colorFilter) ? colorFilter : 'all';
+  }, [boardColors, colorFilter]);
 
   const normalizedSearch = search.trim().toLowerCase();
-  const hasActiveFilters = normalizedSearch.length > 0 || priorityFilter !== 'all';
+  const hasActiveFilters =
+    normalizedSearch.length > 0 || priorityFilter !== 'all' || activeColorFilterId !== 'all';
 
   const filteredCards = useMemo(() => {
     return allCards.filter((card) => {
       if (priorityFilter !== 'all' && card.priority !== priorityFilter) {
+        return false;
+      }
+      if (activeColorFilterId !== 'all' && card.colorId !== activeColorFilterId) {
         return false;
       }
       if (normalizedSearch.length > 0) {
@@ -366,7 +385,7 @@ export function KanbanWorkspace() {
       }
       return true;
     });
-  }, [allCards, normalizedSearch, priorityFilter]);
+  }, [activeColorFilterId, allCards, normalizedSearch, priorityFilter]);
 
   const selectedCard = useMemo(
     () => allCards.find((card) => card.id === selectedCardId) ?? null,
@@ -398,6 +417,7 @@ export function KanbanWorkspace() {
       columnId,
       title: trimmed,
       priority: priorityFilter === 'all' ? 'medium' : priorityFilter,
+      colorId: activeColorFilterId === 'all' ? null : activeColorFilterId,
     });
     await refreshBoard(activeBoardId);
   }
@@ -408,6 +428,7 @@ export function KanbanWorkspace() {
     description: string;
     priority: KanbanPriority;
     dueDate: string | null;
+    colorId: string | null;
     subtasks: string[];
   }) {
     if (!activeBoardId) {
@@ -421,6 +442,7 @@ export function KanbanWorkspace() {
       description: input.description,
       priority: input.priority,
       dueDate: input.dueDate,
+      colorId: input.colorId,
       subtasks: input.subtasks,
     });
     await refreshBoard(activeBoardId);
@@ -428,12 +450,18 @@ export function KanbanWorkspace() {
 
   async function handleQuickUpdateCard(
     cardId: string,
-    patch: { priority?: KanbanPriority; dueDate?: string | null },
+    patch: { priority?: KanbanPriority; dueDate?: string | null; colorId?: string | null },
   ) {
     if (!activeBoardId) {
       return;
     }
-    pushBoardHistory(patch.priority !== undefined ? 'Смена приоритета' : 'Изменение срока');
+    pushBoardHistory(
+      patch.colorId !== undefined
+        ? 'Смена цвета'
+        : patch.priority !== undefined
+          ? 'Смена приоритета'
+          : 'Изменение срока',
+    );
     await updateCard(db, cardId, patch);
     await refreshBoard(activeBoardId);
   }
@@ -548,6 +576,7 @@ export function KanbanWorkspace() {
       description: string;
       priority: KanbanPriority;
       dueDate: string | null;
+      colorId?: string | null;
     },
   ) {
     if (!activeBoardId) {
@@ -603,15 +632,20 @@ export function KanbanWorkspace() {
     await refreshBoard(activeBoardId);
   }
 
-  async function handleBoardSubmit(title: string) {
+  async function handleBoardSubmit(title: string, colorDrafts: KanbanBoardColorDraft[]) {
     if (boardDialog.mode === 'create') {
       if (!userId) {
         return;
       }
       const created = await createBoard(db, userId, title);
+      if (colorDrafts.length > 0) {
+        await saveBoardColors(db, created.id, colorDrafts);
+      }
+      setColorFilter('all');
       await refreshBoard(created.id);
     } else if (activeBoardId) {
       await renameBoard(db, activeBoardId, title);
+      await saveBoardColors(db, activeBoardId, colorDrafts);
       await refreshBoard(activeBoardId);
     }
   }
@@ -671,6 +705,9 @@ export function KanbanWorkspace() {
       if (priorityFilter !== 'all' && card.priority !== priorityFilter) {
         return false;
       }
+      if (activeColorFilterId !== 'all' && card.colorId !== activeColorFilterId) {
+        return false;
+      }
       return `${card.title} ${card.description}`.toLowerCase().includes(clean);
     };
     const currentCol = columns[activeColumnIndex];
@@ -682,6 +719,39 @@ export function KanbanWorkspace() {
     }
     const firstMatchingColIndex = columns.findIndex((col) =>
       allCards.some((card) => card.columnId === col.id && matchesQuery(card)),
+    );
+    if (firstMatchingColIndex !== -1 && firstMatchingColIndex !== activeColumnIndex) {
+      jumpToMobileColumn(firstMatchingColIndex);
+    }
+  }
+
+  function handleToggleColorFilter(targetColorId: string) {
+    const nextColorId = activeColorFilterId === targetColorId ? 'all' : targetColorId;
+    setColorFilter(nextColorId);
+    if (isDesktop || nextColorId === 'all' || columns.length === 0) {
+      return;
+    }
+    const matchesColor = (card: KanbanCardRecord) => {
+      if (card.colorId !== nextColorId) {
+        return false;
+      }
+      if (priorityFilter !== 'all' && card.priority !== priorityFilter) {
+        return false;
+      }
+      if (normalizedSearch.length > 0) {
+        return `${card.title} ${card.description}`.toLowerCase().includes(normalizedSearch);
+      }
+      return true;
+    };
+    const currentCol = columns[activeColumnIndex];
+    const hasMatchInCurrent =
+      currentCol !== undefined &&
+      allCards.some((card) => card.columnId === currentCol.id && matchesColor(card));
+    if (hasMatchInCurrent) {
+      return;
+    }
+    const firstMatchingColIndex = columns.findIndex((col) =>
+      allCards.some((card) => card.columnId === col.id && matchesColor(card)),
     );
     if (firstMatchingColIndex !== -1 && firstMatchingColIndex !== activeColumnIndex) {
       jumpToMobileColumn(firstMatchingColIndex);
@@ -715,6 +785,7 @@ export function KanbanWorkspace() {
         key={column.id}
         column={column}
         allColumns={columns}
+        boardColors={boardColors}
         columnIndex={colIndex}
         totalColumns={columns.length}
         cards={columnCards}
@@ -1148,6 +1219,135 @@ export function KanbanWorkspace() {
         )}
       </View>
 
+      {/* Bottom Color Legend & Filter Bar (KanbanFlow-style) */}
+      {boardColors.length > 0 ? (
+        <View style={styles.colorLegendWrap}>
+          {isDesktop ? (
+            <View
+              style={[
+                styles.colorLegendBarDesktop,
+                { borderColor: colors.line, backgroundColor: colors.surface },
+              ]}>
+              {boardColors.map((item, idx) => {
+                const selected = activeColorFilterId === item.id;
+                const dimmed = activeColorFilterId !== 'all' && !selected;
+                const count = allCards.filter((card) => card.colorId === item.id).length;
+                return (
+                  <Pressable
+                    key={item.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Фильтр по цвету: ${getBoardColorDisplayName(item)}`}
+                    onPress={() => handleToggleColorFilter(item.id)}
+                    style={({ hovered }: { hovered?: boolean }) => [
+                      styles.colorLegendSegmentDesktop,
+                      {
+                        backgroundColor: hexWithAlpha(
+                          item.color,
+                          selected ? 0.34 : hovered ? 0.24 : dimmed ? 0.08 : 0.17,
+                        ),
+                        borderTopColor: item.color,
+                        borderLeftColor: idx > 0 ? colors.line : 'transparent',
+                        borderLeftWidth: idx > 0 ? StyleSheet.hairlineWidth : 0,
+                        opacity: dimmed ? 0.65 : 1,
+                      },
+                    ]}>
+                    <Text
+                      style={[
+                        styles.colorLegendText,
+                        { color: colors.text },
+                        selected ? styles.colorLegendTextActive : null,
+                      ]}
+                      numberOfLines={1}>
+                      {getBoardColorDisplayName(item)}
+                    </Text>
+                    <Text style={[styles.colorLegendCount, { color: colors.muted }]}>{count}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.colorLegendScrollMobile}
+              contentContainerStyle={styles.colorLegendRowMobile}>
+              {boardColors.map((item) => {
+                const selected = activeColorFilterId === item.id;
+                const dimmed = activeColorFilterId !== 'all' && !selected;
+                const count = allCards.filter((card) => card.colorId === item.id).length;
+                return (
+                  <RipplePressable
+                    key={item.id}
+                    accessibilityLabel={`Фильтр: ${getBoardColorDisplayName(item)}`}
+                    onPress={() => handleToggleColorFilter(item.id)}
+                    style={StyleSheet.flatten([
+                      styles.colorLegendPillMobile,
+                      {
+                        backgroundColor: hexWithAlpha(
+                          item.color,
+                          selected ? 0.32 : dimmed ? 0.09 : 0.18,
+                        ),
+                        borderColor: selected ? item.color : hexWithAlpha(item.color, 0.35),
+                        opacity: dimmed ? 0.65 : 1,
+                      },
+                    ])}>
+                    <Text
+                      style={[
+                        styles.colorLegendText,
+                        { color: colors.text },
+                        selected ? styles.colorLegendTextActive : null,
+                      ]}
+                      numberOfLines={1}>
+                      {getBoardColorDisplayName(item)}
+                    </Text>
+                    <Text style={[styles.colorLegendCount, { color: colors.muted }]}>{count}</Text>
+                  </RipplePressable>
+                );
+              })}
+            </ScrollView>
+          )}
+
+          {activeColorFilterId !== 'all' ? (
+            <RipplePressable
+              accessibilityLabel="Сбросить фильтр по цвету"
+              onPress={() => setColorFilter('all')}
+              style={StyleSheet.flatten([
+                styles.colorLegendActionBtn,
+                { backgroundColor: colors.surface, borderColor: colors.line },
+              ])}>
+              <AppIcon name="close" size={12} color={colors.muted} />
+              {isDesktop ? (
+                <Text style={[styles.colorLegendActionText, { color: colors.muted }]}>Все</Text>
+              ) : null}
+            </RipplePressable>
+          ) : null}
+
+          <RipplePressable
+            accessibilityLabel="Настроить цвета доски"
+            onPress={() => setBoardDialog({ open: true, mode: 'edit' })}
+            style={StyleSheet.flatten([
+              styles.colorLegendSettingsBtn,
+              { backgroundColor: colors.surface, borderColor: colors.line },
+            ])}>
+            <AppIcon name="edit" size={12} color={colors.muted} />
+          </RipplePressable>
+        </View>
+      ) : (
+        <View style={styles.colorLegendEmptyRow}>
+          <RipplePressable
+            onPress={() => setBoardDialog({ open: true, mode: 'edit' })}
+            style={StyleSheet.flatten([
+              styles.colorLegendSetupBtn,
+              { backgroundColor: colors.surface, borderColor: colors.line },
+            ])}>
+            <AppIcon name="plus" size={12} color={colors.muted} />
+            <Text style={[styles.colorLegendSetupText, { color: colors.muted }]}>
+              Настроить цвета проектов
+            </Text>
+          </RipplePressable>
+        </View>
+      )}
+
       {/* Floating Board Switcher Popover */}
       <AnchoredPopover
         visible={boardMenuOpen}
@@ -1219,7 +1419,9 @@ export function KanbanWorkspace() {
                 hovered ? { backgroundColor: colors.surfaceSubtle } : null,
               ]}>
               <AppIcon name="edit" size="xs" color={colors.muted} />
-              <Text style={[styles.popoverLabel, { color: colors.text }]}>Настроить доску</Text>
+              <Text style={[styles.popoverLabel, { color: colors.text }]}>
+                Цвета и настройки доски
+              </Text>
             </Pressable>
 
             {!isDesktop ? (
@@ -1296,8 +1498,10 @@ export function KanbanWorkspace() {
       <CreateCardModal
         visible={createCardModal.open}
         columns={columns}
+        boardColors={boardColors}
         initialColumnId={createCardModal.columnId}
         initialPriority={priorityFilter === 'all' ? 'medium' : priorityFilter}
+        initialColorId={activeColorFilterId === 'all' ? null : activeColorFilterId}
         onClose={() => setCreateCardModal((prev) => ({ ...prev, open: false }))}
         onCreate={handleCreateDetailedCard}
       />
@@ -1305,6 +1509,7 @@ export function KanbanWorkspace() {
       <CardDetailModal
         card={selectedCard}
         columns={columns}
+        boardColors={boardColors}
         cardIndex={selectedCardIndex}
         columnCardCount={selectedCardColumnCards.length}
         onClose={() => setSelectedCardId(null)}
@@ -1322,6 +1527,7 @@ export function KanbanWorkspace() {
         visible={boardDialog.open}
         mode={boardDialog.mode}
         initialTitle={boardDialog.mode === 'edit' ? boardData.board.title : ''}
+        initialColors={boardDialog.mode === 'edit' ? boardColors : []}
         canDelete={boards.length > 1}
         onClose={() => setBoardDialog((prev) => ({ ...prev, open: false }))}
         onSubmit={handleBoardSubmit}
@@ -1379,6 +1585,7 @@ export function KanbanWorkspace() {
 function KanbanColumnView({
   column,
   allColumns,
+  boardColors,
   columnIndex,
   totalColumns,
   cards,
@@ -1414,6 +1621,7 @@ function KanbanColumnView({
 }: {
   column: KanbanColumnRecord;
   allColumns: KanbanColumnRecord[];
+  boardColors: KanbanBoardColorRecord[];
   columnIndex: number;
   totalColumns: number;
   cards: KanbanCardRecord[];
@@ -1435,7 +1643,7 @@ function KanbanColumnView({
   onReorderCard: (cardId: string, direction: -1 | 1) => void;
   onQuickUpdateCard: (
     cardId: string,
-    patch: { priority?: KanbanPriority; dueDate?: string | null },
+    patch: { priority?: KanbanPriority; dueDate?: string | null; colorId?: string | null },
   ) => void;
   onDeleteCard: (cardId: string) => void;
   onEditColumn: () => void;
@@ -1627,6 +1835,7 @@ function KanbanColumnView({
                   key={card.id}
                   card={card}
                   columns={allColumns}
+                  boardColors={boardColors}
                   colors={colors}
                   isDesktop={isDesktop}
                   canMoveLeft={columnIndex > 0}
@@ -2106,5 +2315,108 @@ const styles = StyleSheet.create({
   },
   addButtonDisabled: {
     opacity: 0.35,
+  },
+  colorLegendWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  colorLegendBarDesktop: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    borderRadius: 11,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+    height: 34,
+  },
+  colorLegendSegmentDesktop: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    borderTopWidth: 3,
+    ...(Platform.OS === 'web'
+      ? ({
+          cursor: 'pointer',
+          userSelect: 'none',
+          transition: 'background-color 120ms ease, opacity 120ms ease',
+        } as object)
+      : null),
+  },
+  colorLegendScrollMobile: {
+    flex: 1,
+    flexGrow: 1,
+  },
+  colorLegendRowMobile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingRight: 4,
+  },
+  colorLegendPillMobile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 32,
+    paddingHorizontal: 10,
+    borderRadius: 9,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  colorLegendText: {
+    fontSize: 12,
+    fontWeight: '600',
+    flexShrink: 1,
+  },
+  colorLegendTextActive: {
+    fontWeight: '700',
+  },
+  colorLegendCount: {
+    fontSize: 11,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  colorLegendActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    height: 34,
+    paddingHorizontal: 10,
+    borderRadius: 9,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  colorLegendActionText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  colorLegendSettingsBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 9,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  colorLegendEmptyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
+  colorLegendSetupBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 11,
+    height: 30,
+    borderRadius: 9,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  colorLegendSetupText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

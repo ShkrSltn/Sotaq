@@ -10,7 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -90,9 +90,7 @@ export function TaskPickerModal({
       <View style={styles.modalRoot}>
         <Pressable style={styles.backdrop} onPress={onClose} />
         <Animated.View
-          entering={
-            isDesktop ? FadeIn.duration(140) : SlideInDown.springify().damping(24).stiffness(260)
-          }
+          entering={FadeIn.duration(110)}
           style={[
             styles.pickerSheet,
             isDesktop ? styles.pickerDesktop : styles.pickerMobile,
@@ -525,7 +523,7 @@ export function FocusMobileTrigger() {
         <View style={styles.modalRoot}>
           <Pressable style={styles.backdrop} onPress={() => setSheetOpen(false)} />
           <Animated.View
-            entering={SlideInDown.springify().damping(24).stiffness(260)}
+            entering={FadeIn.duration(110)}
             style={[
               styles.mobileFocusSheet,
               {

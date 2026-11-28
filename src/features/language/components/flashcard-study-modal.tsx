@@ -8,7 +8,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import Animated, { FadeIn, FadeInDown, SlideInDown } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/app-icon';
@@ -190,9 +190,7 @@ function FlashcardStudyModalContent({
         />
 
         <Animated.View
-          entering={
-            isDesktop ? FadeIn.duration(150) : SlideInDown.springify().damping(24).stiffness(260)
-          }
+          entering={FadeIn.duration(110)}
           style={[
             styles.sheet,
             isDesktop ? styles.sheetDesktop : styles.sheetMobile,

@@ -8,7 +8,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import Animated, { SlideInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/app-icon';
@@ -63,7 +63,7 @@ export function MobileInsertBlockSheet({
       <View style={styles.root}>
         <Pressable style={styles.backdrop} onPress={onClose} />
         <Animated.View
-          entering={SlideInDown.springify().damping(25).stiffness(280)}
+          entering={FadeIn.duration(110)}
           style={[
             styles.sheet,
             {
@@ -168,7 +168,7 @@ export function MobileBlockActionsSheet({
       <View style={styles.root}>
         <Pressable style={styles.backdrop} onPress={onClose} />
         <Animated.View
-          entering={SlideInDown.springify().damping(25).stiffness(280)}
+          entering={FadeIn.duration(110)}
           style={[
             styles.sheet,
             {
@@ -425,7 +425,7 @@ function MobilePageActionsSheetContent({
       <View style={styles.root}>
         <Pressable style={styles.backdrop} onPress={saveRenameAndClose} />
         <Animated.View
-          entering={SlideInDown.springify().damping(25).stiffness(280)}
+          entering={FadeIn.duration(110)}
           style={[
             styles.sheet,
             {

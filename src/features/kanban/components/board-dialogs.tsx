@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import {
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -13,6 +12,7 @@ import {
 import Animated, { FadeIn } from 'react-native-reanimated';
 
 import { AppIcon } from '@/components/app-icon';
+import { KeyboardAvoidingModalView } from '@/components/keyboard-avoiding-modal-view';
 import { RipplePressable } from '@/components/ripple-pressable';
 import {
   BOARD_COLOR_PALETTE,
@@ -158,9 +158,7 @@ function BoardDialogContent({
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.root}>
+      <KeyboardAvoidingModalView style={styles.root}>
         <Pressable style={styles.backdrop} onPress={onClose} />
         <Animated.View
           entering={FadeIn.duration(140)}
@@ -438,7 +436,7 @@ function BoardDialogContent({
             </View>
           ) : null}
         </Animated.View>
-      </KeyboardAvoidingView>
+      </KeyboardAvoidingModalView>
     </Modal>
   );
 }

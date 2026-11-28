@@ -9,7 +9,6 @@ import {
 import {
     ActivityIndicator,
     Keyboard,
-    KeyboardAvoidingView,
     Platform,
     Pressable,
     ScrollView,
@@ -26,6 +25,7 @@ import {
 } from "@/components/anchored-popover";
 import { AppIcon } from "@/components/app-icon";
 import { DragTrashZone } from "@/components/drag-trash-zone";
+import { useKeyboardInset } from "@/components/keyboard-avoiding-modal-view";
 import { RipplePressable } from "@/components/ripple-pressable";
 import { HistoryToast, UndoRedoButtons } from "@/components/undo-redo-bar";
 import { WebDragBox } from "@/components/web-drag-box";
@@ -139,6 +139,7 @@ export function NotesWorkspace() {
   const colors = useThemeColors();
   const scheme = useResolvedColorScheme();
   const { isDesktop } = useViewport();
+  const keyboardInset = useKeyboardInset();
 
   const [pages, setPages] = useState<NotePageRecord[]>([]);
   const [activePageId, setActivePageId] = useState<string | null>(null);
@@ -1165,9 +1166,17 @@ export function NotesWorkspace() {
         ) : null}
 
         {showEditorPane && activePage ? (
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-            style={[styles.canvasPane, { backgroundColor: colors.background }]}
+          <View
+            style={[
+              styles.canvasPane,
+              {
+                backgroundColor: colors.background,
+                paddingBottom:
+                  !isDesktop && keyboardInset > 0
+                    ? Math.max(0, keyboardInset - 60)
+                    : 0,
+              },
+            ]}
           >
             {/* Clean Notion Top Bar */}
             <View style={[styles.topBar, { borderBottomColor: colors.line }]}>
@@ -1373,8 +1382,13 @@ export function NotesWorkspace() {
             {/* Document Sheet */}
             <ScrollView
               style={styles.canvasScroll}
-              contentContainerStyle={styles.canvasScrollContent}
+              contentContainerStyle={[
+                styles.canvasScrollContent,
+                !isDesktop ? styles.canvasScrollContentMobile : null,
+              ]}
               keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+              automaticallyAdjustKeyboardInsets={false}
             >
               {/* Optional Notion-style Cover Band */}
               {coverBg ? (
@@ -2003,7 +2017,7 @@ export function NotesWorkspace() {
                 </View>
               )
             ) : null}
-          </KeyboardAvoidingView>
+          </View>
         ) : null}
       </View>
 
@@ -2428,6 +2442,9 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     alignItems: "center",
     paddingBottom: 96,
+  },
+  canvasScrollContentMobile: {
+    paddingBottom: 220,
   },
   coverBand: {
     width: "100%",

@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -11,10 +10,11 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/app-icon';
+import { KeyboardAvoidingModalView } from '@/components/keyboard-avoiding-modal-view';
 import { RipplePressable } from '@/components/ripple-pressable';
 import {
   type LanguageRecord,
@@ -140,15 +140,11 @@ function CreateWordModalContent({
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.root}>
+      <KeyboardAvoidingModalView style={styles.root}>
         <Pressable style={styles.backdrop} onPress={onClose} />
 
         <Animated.View
-          entering={
-            isDesktop ? FadeIn.duration(150) : SlideInDown.springify().damping(24).stiffness(260)
-          }
+          entering={FadeIn.duration(110)}
           style={[
             styles.sheet,
             isDesktop ? styles.sheetDesktop : styles.sheetMobile,
@@ -425,7 +421,7 @@ function CreateWordModalContent({
             </RipplePressable>
           </View>
         </Animated.View>
-      </KeyboardAvoidingView>
+      </KeyboardAvoidingModalView>
     </Modal>
   );
 }

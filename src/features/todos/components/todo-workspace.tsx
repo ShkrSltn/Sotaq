@@ -10,7 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import Animated, { SlideInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -1524,7 +1524,7 @@ export function TodoWorkspace() {
         <View style={styles.sheetRoot}>
           <Pressable style={styles.sheetBackdrop} onPress={() => setMobileNavOpen(false)} />
           <Animated.View
-            entering={SlideInDown.springify().damping(24).stiffness(260)}
+            entering={FadeIn.duration(110)}
             style={[
               styles.mobileNavSheet,
               {

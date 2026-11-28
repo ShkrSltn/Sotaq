@@ -1,5 +1,5 @@
 import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
-import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/app-icon';
@@ -67,9 +67,7 @@ export function WorkspacePagesModal({ visible, onClose }: Props) {
       <View style={[styles.root, isDesktop ? styles.rootDesktop : styles.rootMobile]}>
         <Pressable style={styles.backdrop} onPress={onClose} />
         <Animated.View
-          entering={
-            isDesktop ? FadeIn.duration(130) : SlideInDown.springify().damping(24).stiffness(260)
-          }
+          entering={FadeIn.duration(110)}
           style={[
             styles.card,
             isDesktop ? styles.cardDesktop : styles.cardMobile,

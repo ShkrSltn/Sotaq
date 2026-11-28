@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import {
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -10,10 +9,11 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/app-icon';
+import { KeyboardAvoidingModalView } from '@/components/keyboard-avoiding-modal-view';
 import { RipplePressable } from '@/components/ripple-pressable';
 import { addDaysDateKey, formatDueDateLabel, PRIORITY_META } from '@/features/kanban/types';
 import type { TodoListRecord, TodoPriority } from '@/features/todos/types';
@@ -93,15 +93,11 @@ function CreateTodoModalContent({
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.root}>
+      <KeyboardAvoidingModalView style={styles.root}>
         <Pressable style={styles.backdrop} onPress={onClose} />
 
         <Animated.View
-          entering={
-            isDesktop ? FadeIn.duration(140) : SlideInDown.springify().damping(24).stiffness(260)
-          }
+          entering={FadeIn.duration(110)}
           style={[
             styles.sheet,
             isDesktop ? styles.sheetDesktop : styles.sheetMobile,
@@ -310,7 +306,7 @@ function CreateTodoModalContent({
             </RipplePressable>
           </View>
         </Animated.View>
-      </KeyboardAvoidingView>
+      </KeyboardAvoidingModalView>
     </Modal>
   );
 }

@@ -9,10 +9,11 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon, type IconName } from '@/components/app-icon';
+import { KeyboardAvoidingModalView } from '@/components/keyboard-avoiding-modal-view';
 import { RipplePressable } from '@/components/ripple-pressable';
 import {
   HABIT_COLORS,
@@ -97,12 +98,11 @@ function HabitDialogContent({
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <View style={[styles.root, isDesktop ? styles.rootDesktop : styles.rootMobile]}>
+      <KeyboardAvoidingModalView
+        style={[styles.root, isDesktop ? styles.rootDesktop : styles.rootMobile]}>
         <Pressable style={styles.backdrop} onPress={onClose} />
         <Animated.View
-          entering={
-            isDesktop ? FadeIn.duration(140) : SlideInDown.springify().damping(24).stiffness(260)
-          }
+          entering={FadeIn.duration(110)}
           style={[
             styles.card,
             isDesktop ? styles.cardDesktop : styles.cardMobile,
@@ -289,7 +289,7 @@ function HabitDialogContent({
             </View>
           </ScrollView>
         </Animated.View>
-      </View>
+      </KeyboardAvoidingModalView>
     </Modal>
   );
 }

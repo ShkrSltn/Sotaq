@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ComponentRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -9,9 +10,17 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import Animated, { SlideInDown } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import {
+  AnchoredPopover,
+  type AnchorRect,
+  measureAnchor,
+} from '@/components/anchored-popover';
 import { AppIcon, type IconName } from '@/components/app-icon';
 import { DragTrashZone } from '@/components/drag-trash-zone';
+import { MobileSearchBar } from '@/components/mobile-search-bar';
 import { RipplePressable } from '@/components/ripple-pressable';
 import { HistoryToast, UndoRedoButtons } from '@/components/undo-redo-bar';
 import { WebDragBox } from '@/components/web-drag-box';
@@ -99,11 +108,11 @@ const SMART_FILTERS: readonly {
   },
 ];
 
-const PRIORITY_FILTERS: readonly { key: PriorityFilter; label: string }[] = [
-  { key: 'all', label: 'Все' },
-  { key: 'high', label: 'Высок.' },
-  { key: 'medium', label: 'Обыч.' },
-  { key: 'low', label: 'Низк.' },
+const PRIORITY_FILTERS: readonly { key: PriorityFilter; label: string; fullLabel: string }[] = [
+  { key: 'all', label: 'Все', fullLabel: 'Все приоритеты' },
+  { key: 'high', label: 'Высок.', fullLabel: 'Высокий' },
+  { key: 'medium', label: 'Обыч.', fullLabel: 'Обычный' },
+  { key: 'low', label: 'Низк.', fullLabel: 'Низкий' },
 ];
 
 type TodoHistoryEntry = {
@@ -120,6 +129,7 @@ export function TodoWorkspace() {
   const userId = user?.id ?? '';
   const colors = useThemeColors();
   const { isDesktop } = useViewport();
+  const insets = useSafeAreaInsets();
 
   const [lists, setLists] = useState<TodoListRecord[]>([]);
   const [todos, setTodos] = useState<TodoItemRecord[]>([]);
@@ -130,6 +140,10 @@ export function TodoWorkspace() {
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all');
   const [search, setSearch] = useState('');
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [mobilePriorityOpen, setMobilePriorityOpen] = useState(false);
+  const [mobilePriorityAnchor, setMobilePriorityAnchor] = useState<AnchorRect | null>(null);
+  const mobilePriorityBtnRef = useRef<ComponentRef<typeof View>>(null);
   const [showCompletedInView, setShowCompletedInView] = useState(false);
 
   const [quickDraft, setQuickDraft] = useState('');
@@ -750,6 +764,19 @@ export function TodoWorkspace() {
               styles.rail,
               { backgroundColor: colors.surface, borderColor: colors.line },
             ]}>
+            {/* Primary Detailed Add Trigger */}
+            <RipplePressable
+              onPress={() => setCreateModalOpen(true)}
+              style={StyleSheet.flatten([
+                styles.railPrimaryBtn,
+                { backgroundColor: colors.accent },
+              ])}>
+              <AppIcon name="plus" size="sm" color={colors.accentText} />
+              <Text style={[styles.railPrimaryLabel, { color: colors.accentText }]}>
+                Новая задача
+              </Text>
+            </RipplePressable>
+
             {/* Section 1: Smart Overview */}
             <View style={styles.railSection}>
               <Text style={[styles.railCaption, { color: colors.muted }]}>Обзор</Text>
@@ -1007,303 +1034,327 @@ export function TodoWorkspace() {
             ) : null}
           </View>
         ) : (
-          <View style={styles.mobileFiltersWrap}>
-            <View style={styles.mobileTopBar}>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.mobilePillRow}>
-                {SMART_FILTERS.map((item) => {
-                  const active = view.kind === 'smart' && view.filter === item.key;
-                  const count = counts[item.key];
-                  return (
-                    <RipplePressable
-                      key={item.key}
-                      onPress={() => {
-                        setConfirmClearDone(false);
-                        setView({ kind: 'smart', filter: item.key });
+          /* Clean Single-Row Mobile Header Bar (Things 3 / Linear style) */
+          <View style={[styles.mobileCleanBarWrap, { borderBottomColor: colors.line }]}>
+            {mobileSearchOpen ? (
+              <MobileSearchBar
+                value={search}
+                onChangeText={setSearch}
+                onCancel={() => {
+                  setSearch('');
+                  setMobileSearchOpen(false);
+                }}
+                placeholder="Поиск задач…"
+                colors={colors}
+                matchCount={
+                  isDoneOnlyView
+                    ? completedTodos.length
+                    : activeTodos.length + completedTodos.length
+                }
+              />
+            ) : (
+              <View style={styles.mobileCleanBar}>
+                <RipplePressable
+                  accessibilityLabel="Выбрать список или фильтр"
+                  onPress={() => setMobileNavOpen(true)}
+                  style={StyleSheet.flatten([
+                    styles.mobileViewTrigger,
+                    { backgroundColor: colors.surface, borderColor: colors.line },
+                  ])}>
+                  <AppIcon
+                    name={activeList ? 'list' : activeSmartMeta?.icon ?? 'circle'}
+                    size="sm"
+                    color={activeList ? colors.text : activeSmartMeta?.accent ?? colors.text}
+                  />
+                  <Text
+                    style={[styles.mobileViewTriggerText, { color: colors.text }]}
+                    numberOfLines={1}>
+                    {headerTitle}
+                  </Text>
+                  <Text style={[styles.mobileViewTriggerCount, { color: colors.muted }]}>
+                    {isDoneOnlyView ? completedTodos.length : activeTodos.length}
+                  </Text>
+                  <AppIcon name="chevronDown" size="xs" color={colors.muted} />
+                </RipplePressable>
+
+                <View style={styles.mobileCleanActions}>
+                  {historyMeta.canUndo || historyMeta.canRedo ? (
+                    <UndoRedoButtons
+                      compact
+                      canUndo={historyMeta.canUndo}
+                      canRedo={historyMeta.canRedo}
+                      colors={colors}
+                      onUndo={() => {
+                        handleUndoTodo();
                       }}
-                      style={StyleSheet.flatten([
-                        styles.mobilePill,
-                        {
-                          backgroundColor: active ? colors.accent : colors.surface,
-                          borderColor: active ? colors.accent : colors.line,
-                        },
-                      ])}>
-                      <AppIcon
-                        name={item.icon}
-                        size="xs"
-                        color={active ? colors.accentText : item.accent ?? colors.muted}
-                      />
-                      <Text
-                        style={[
-                          styles.mobilePillText,
-                          { color: active ? colors.accentText : colors.text },
-                        ]}>
-                        {item.label}
-                      </Text>
-                      {count > 0 ? (
-                        <Text
-                          style={[
-                            styles.mobilePillCount,
-                            { color: active ? colors.accentText : colors.muted },
-                          ]}>
-                          {count}
-                        </Text>
-                      ) : null}
-                    </RipplePressable>
-                  );
-                })}
-              </ScrollView>
+                      onRedo={() => {
+                        handleRedoTodo();
+                      }}
+                    />
+                  ) : null}
 
-              <RipplePressable
-                accessibilityLabel="Поиск"
-                onPress={() => setMobileSearchOpen((value) => !value)}
-                style={StyleSheet.flatten([
-                  styles.mobileIconBtn,
-                  {
-                    backgroundColor:
-                      mobileSearchOpen || search.length > 0 ? colors.accent : colors.surface,
-                    borderColor:
-                      mobileSearchOpen || search.length > 0 ? colors.accent : colors.line,
-                  },
-                ])}>
-                <AppIcon
-                  name="search"
-                  size="sm"
-                  color={
-                    mobileSearchOpen || search.length > 0 ? colors.accentText : colors.text
-                  }
-                />
-              </RipplePressable>
-            </View>
+                  {!isDoneOnlyView ? (
+                    <View ref={mobilePriorityBtnRef} collapsable={false}>
+                      <RipplePressable
+                        accessibilityLabel="Фильтр по приоритету"
+                        onPress={() => {
+                          measureAnchor(mobilePriorityBtnRef.current, (rect) => {
+                            setMobilePriorityAnchor(rect);
+                            setMobilePriorityOpen(true);
+                          });
+                        }}
+                        style={StyleSheet.flatten([
+                          styles.mobileIconBtn,
+                          {
+                            backgroundColor:
+                              priorityFilter !== 'all' ? colors.surfaceActive : colors.surface,
+                            borderColor: priorityFilter !== 'all' ? colors.text : colors.line,
+                          },
+                        ])}>
+                        {priorityFilter !== 'all' ? (
+                          <View
+                            style={[
+                              styles.dot,
+                              { backgroundColor: PRIORITY_META[priorityFilter].dotColor },
+                            ]}
+                          />
+                        ) : (
+                          <AppIcon name="filter" size="sm" color={colors.muted} />
+                        )}
+                      </RipplePressable>
+                    </View>
+                  ) : null}
 
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.mobileListsRow}>
-              <Text style={[styles.mobileListsCaption, { color: colors.muted }]}>Списки:</Text>
-              {lists.map((list) => {
-                const active = view.kind === 'list' && view.listId === list.id;
-                const count = counts.byList.get(list.id) ?? 0;
-                return (
                   <RipplePressable
-                    key={list.id}
-                    onPress={() => {
-                      setConfirmClearDone(false);
-                      setView({ kind: 'list', listId: list.id });
-                    }}
+                    accessibilityLabel="Поиск задач"
+                    onPress={() => setMobileSearchOpen(true)}
                     style={StyleSheet.flatten([
-                      styles.mobileListPill,
+                      styles.mobileIconBtn,
                       {
-                        backgroundColor: active ? colors.surfaceActive : colors.surface,
-                        borderColor: active ? colors.text : colors.line,
+                        backgroundColor: colors.surface,
+                        borderColor: colors.line,
                       },
                     ])}>
-                    <AppIcon name="list" size="xs" color={active ? colors.text : colors.muted} />
-                    <Text
-                      style={[
-                        styles.mobileListPillText,
-                        { color: active ? colors.text : colors.muted },
-                      ]}>
-                      {list.title}
-                    </Text>
-                    {count > 0 ? (
-                      <Text style={[styles.mobilePillCount, { color: colors.muted }]}>{count}</Text>
-                    ) : null}
+                    <AppIcon name="search" size="sm" color={colors.muted} />
                   </RipplePressable>
-                );
-              })}
 
-              <RipplePressable
-                accessibilityLabel="Новый список"
-                onPress={() => setListDialog({ open: true, mode: 'create', list: null })}
-                style={StyleSheet.flatten([
-                  styles.mobileListPill,
-                  { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
-                ])}>
-                <AppIcon name="plus" size="xs" color={colors.text} />
-                <Text style={[styles.mobileListPillText, { color: colors.text }]}>Список</Text>
-              </RipplePressable>
-            </ScrollView>
-
-            {mobileSearchOpen ? (
-              <View
-                style={[
-                  styles.mobileSearchBox,
-                  { backgroundColor: colors.surface, borderColor: colors.line },
-                ]}>
-                <TextInput
-                  value={search}
-                  onChangeText={setSearch}
-                  autoFocus
-                  placeholder="Поиск задач…"
-                  placeholderTextColor={colors.muted}
-                  style={[styles.searchInput, { color: colors.text }]}
-                />
-                {search.length > 0 ? (
-                  <RipplePressable onPress={() => setSearch('')} style={styles.clearBtn}>
-                    <AppIcon name="close" size="xs" color={colors.muted} />
+                  <RipplePressable
+                    accessibilityLabel="Создать задачу с деталями"
+                    onPress={() => setCreateModalOpen(true)}
+                    style={StyleSheet.flatten([
+                      styles.mobileIconBtn,
+                      { backgroundColor: colors.accent, borderColor: colors.accent },
+                    ])}>
+                    <AppIcon name="plus" size="sm" color={colors.accentText} />
                   </RipplePressable>
-                ) : null}
+                </View>
+              </View>
+            )}
+
+            {/* Active priority dismissible chip or Done clear button */}
+            {priorityFilter !== 'all' && !isDoneOnlyView ? (
+              <View style={styles.mobileActiveFilterRow}>
+                <RipplePressable
+                  onPress={() => setPriorityFilter('all')}
+                  style={StyleSheet.flatten([
+                    styles.mobileActiveChip,
+                    { backgroundColor: colors.surface, borderColor: colors.line },
+                  ])}>
+                  <View
+                    style={[
+                      styles.dot,
+                      { backgroundColor: PRIORITY_META[priorityFilter].dotColor },
+                    ]}
+                  />
+                  <Text style={[styles.mobileActiveChipText, { color: colors.text }]}>
+                    Приоритет: {PRIORITY_META[priorityFilter].label}
+                  </Text>
+                  <AppIcon name="close" size={11} color={colors.muted} />
+                </RipplePressable>
+              </View>
+            ) : null}
+
+            {isDoneOnlyView && completedTodos.length > 0 ? (
+              <View style={styles.mobileActiveFilterRow}>
+                <RipplePressable
+                  onPress={handleClearDone}
+                  style={StyleSheet.flatten([
+                    styles.clearDoneBtn,
+                    { backgroundColor: confirmClearDone ? colors.danger : colors.dangerBg },
+                  ])}>
+                  <AppIcon
+                    name="trash"
+                    size="xs"
+                    color={confirmClearDone ? '#FFFFFF' : colors.danger}
+                  />
+                  <Text
+                    style={[
+                      styles.clearDoneLabel,
+                      { color: confirmClearDone ? '#FFFFFF' : colors.danger },
+                    ]}>
+                    {confirmClearDone ? 'Точно очистить?' : 'Очистить выполненные'}
+                  </Text>
+                </RipplePressable>
               </View>
             ) : null}
           </View>
         )}
 
-        {/* Main Task Panel */}
+        {/* Main Task Panel (Card on Desktop, Edge-to-Edge on Mobile) */}
         <View
           style={[
             styles.panel,
-            { backgroundColor: colors.surface, borderColor: colors.line },
+            isDesktop
+              ? { backgroundColor: colors.surface, borderColor: colors.line }
+              : styles.panelMobile,
           ]}>
-          {/* Clear Panel Header */}
-          <View style={[styles.panelHeader, { borderBottomColor: colors.line }]}>
-            <View style={styles.panelHeadingCol}>
-              <View style={styles.panelTitleRow}>
-                <AppIcon
-                  name={activeList ? 'list' : activeSmartMeta?.icon ?? 'circle'}
-                  size="md"
-                  color={activeList ? colors.text : activeSmartMeta?.accent ?? colors.text}
-                />
-                <Text style={[styles.panelTitle, { color: colors.text }]} numberOfLines={1}>
-                  {headerTitle}
-                </Text>
-                {activeList ? (
-                  <RipplePressable
-                    accessibilityLabel="Настройки списка"
-                    onPress={() =>
-                      setListDialog({ open: true, mode: 'edit', list: activeList })
-                    }
-                    style={styles.listEditBtn}>
-                    <AppIcon name="more" size="sm" color={colors.muted} />
-                  </RipplePressable>
-                ) : null}
-              </View>
-              <Text style={[styles.panelSubtitle, { color: colors.muted }]} numberOfLines={1}>
-                {headerSubtitle}
-              </Text>
-            </View>
+          {/* Desktop Panel Header & Priority Filter Strip (Mobile uses single clean bar above) */}
+          {isDesktop ? (
+            <>
+              <View style={[styles.panelHeader, { borderBottomColor: colors.line }]}>
+                <View style={styles.panelHeadingCol}>
+                  <View style={styles.panelTitleRow}>
+                    <AppIcon
+                      name={activeList ? 'list' : activeSmartMeta?.icon ?? 'circle'}
+                      size="md"
+                      color={activeList ? colors.text : activeSmartMeta?.accent ?? colors.text}
+                    />
+                    <Text style={[styles.panelTitle, { color: colors.text }]} numberOfLines={1}>
+                      {headerTitle}
+                    </Text>
+                    {activeList ? (
+                      <RipplePressable
+                        accessibilityLabel="Настройки списка"
+                        onPress={() =>
+                          setListDialog({ open: true, mode: 'edit', list: activeList })
+                        }
+                        style={styles.listEditBtn}>
+                        <AppIcon name="more" size="sm" color={colors.muted} />
+                      </RipplePressable>
+                    ) : null}
+                  </View>
+                  <Text style={[styles.panelSubtitle, { color: colors.muted }]} numberOfLines={1}>
+                    {headerSubtitle}
+                  </Text>
+                </View>
 
-            <View style={styles.panelHeaderActions}>
-              <UndoRedoButtons
-                compact
-                canUndo={historyMeta.canUndo}
-                canRedo={historyMeta.canRedo}
-                colors={colors}
-                onUndo={() => {
-                  handleUndoTodo();
-                }}
-                onRedo={() => {
-                  handleRedoTodo();
-                }}
-              />
-
-              <View style={[styles.headerDivider, { backgroundColor: colors.line }]} />
-
-              {isDesktop ? (
-                <View
-                  style={[
-                    styles.searchBox,
-                    { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
-                  ]}>
-                  <AppIcon name="search" size="xs" color={colors.muted} />
-                  <TextInput
-                    value={search}
-                    onChangeText={setSearch}
-                    placeholder="Поиск…"
-                    placeholderTextColor={colors.muted}
-                    style={[styles.searchInput, { color: colors.text }]}
+                <View style={styles.panelHeaderActions}>
+                  <UndoRedoButtons
+                    compact
+                    canUndo={historyMeta.canUndo}
+                    canRedo={historyMeta.canRedo}
+                    colors={colors}
+                    onUndo={() => {
+                      handleUndoTodo();
+                    }}
+                    onRedo={() => {
+                      handleRedoTodo();
+                    }}
                   />
-                  {search.length > 0 ? (
-                    <RipplePressable onPress={() => setSearch('')} style={styles.clearBtn}>
-                      <AppIcon name="close" size="xs" color={colors.muted} />
-                    </RipplePressable>
-                  ) : null}
+
+                  <View style={[styles.headerDivider, { backgroundColor: colors.line }]} />
+
+                  <View
+                    style={[
+                      styles.searchBox,
+                      { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
+                    ]}>
+                    <AppIcon name="search" size="xs" color={colors.muted} />
+                    <TextInput
+                      value={search}
+                      onChangeText={setSearch}
+                      placeholder="Поиск…"
+                      placeholderTextColor={colors.muted}
+                      style={[styles.searchInput, { color: colors.text }]}
+                    />
+                    {search.length > 0 ? (
+                      <RipplePressable onPress={() => setSearch('')} style={styles.clearBtn}>
+                        <AppIcon name="close" size="xs" color={colors.muted} />
+                      </RipplePressable>
+                    ) : null}
+                  </View>
+
+                  <RipplePressable
+                    accessibilityLabel="Создать задачу с деталями"
+                    onPress={() => setCreateModalOpen(true)}
+                    style={StyleSheet.flatten([
+                      styles.headerAddBtn,
+                      { backgroundColor: colors.accent },
+                    ])}>
+                    <AppIcon name="plus" size="xs" color={colors.accentText} />
+                    <Text style={[styles.headerAddLabel, { color: colors.accentText }]}>
+                      Задача
+                    </Text>
+                  </RipplePressable>
+                </View>
+              </View>
+
+              {!isDoneOnlyView ? (
+                <View style={[styles.sectionToolbar, { borderBottomColor: colors.line }]}>
+                  <Text style={[styles.sectionHeading, { color: colors.muted }]}>
+                    Активные · {activeTodos.length}
+                  </Text>
+                  <View style={styles.priorityFilterRow}>
+                    {PRIORITY_FILTERS.map((filter) => {
+                      const active = priorityFilter === filter.key;
+                      return (
+                        <RipplePressable
+                          key={filter.key}
+                          onPress={() => setPriorityFilter(filter.key)}
+                          style={StyleSheet.flatten([
+                            styles.priorityFilterChip,
+                            {
+                              backgroundColor: active ? colors.surfaceActive : 'transparent',
+                              borderColor: active ? colors.line : 'transparent',
+                            },
+                          ])}>
+                          {filter.key !== 'all' ? (
+                            <View
+                              style={[
+                                styles.dot,
+                                { backgroundColor: PRIORITY_META[filter.key].dotColor },
+                              ]}
+                            />
+                          ) : null}
+                          <Text
+                            style={[
+                              styles.priorityFilterText,
+                              { color: active ? colors.text : colors.muted },
+                            ]}>
+                            {filter.label}
+                          </Text>
+                        </RipplePressable>
+                      );
+                    })}
+                  </View>
+                </View>
+              ) : completedTodos.length > 0 ? (
+                <View style={[styles.sectionToolbar, { borderBottomColor: colors.line }]}>
+                  <Text style={[styles.sectionHeading, { color: colors.muted }]}>
+                    Выполненные · {completedTodos.length}
+                  </Text>
+                  <RipplePressable
+                    onPress={handleClearDone}
+                    style={StyleSheet.flatten([
+                      styles.clearDoneBtn,
+                      { backgroundColor: confirmClearDone ? colors.danger : colors.dangerBg },
+                    ])}>
+                    <AppIcon
+                      name="trash"
+                      size="xs"
+                      color={confirmClearDone ? '#FFFFFF' : colors.danger}
+                    />
+                    <Text
+                      style={[
+                        styles.clearDoneLabel,
+                        { color: confirmClearDone ? '#FFFFFF' : colors.danger },
+                      ]}>
+                      {confirmClearDone ? 'Точно очистить все?' : 'Очистить всё'}
+                    </Text>
+                  </RipplePressable>
                 </View>
               ) : null}
-
-              {/* Detailed Create Task Modal Trigger (single popup button) */}
-              <RipplePressable
-                accessibilityLabel="Создать задачу с деталями"
-                onPress={() => setCreateModalOpen(true)}
-                style={StyleSheet.flatten([
-                  isDesktop ? styles.headerAddBtn : styles.headerAddBtnMobile,
-                  { backgroundColor: colors.accent },
-                ])}>
-                <AppIcon name="plus" size="xs" color={colors.accentText} />
-                {isDesktop ? (
-                  <Text style={[styles.headerAddLabel, { color: colors.accentText }]}>Задача</Text>
-                ) : null}
-              </RipplePressable>
-            </View>
-          </View>
-
-          {/* Priority Filter Strip (when viewing active tasks) */}
-          {!isDoneOnlyView ? (
-            <View style={[styles.sectionToolbar, { borderBottomColor: colors.line }]}>
-              <Text style={[styles.sectionHeading, { color: colors.muted }]}>
-                Активные · {activeTodos.length}
-              </Text>
-              <View style={styles.priorityFilterRow}>
-                {PRIORITY_FILTERS.map((filter) => {
-                  const active = priorityFilter === filter.key;
-                  return (
-                    <RipplePressable
-                      key={filter.key}
-                      onPress={() => setPriorityFilter(filter.key)}
-                      style={StyleSheet.flatten([
-                        styles.priorityFilterChip,
-                        {
-                          backgroundColor: active ? colors.surfaceActive : 'transparent',
-                          borderColor: active ? colors.line : 'transparent',
-                        },
-                      ])}>
-                      {filter.key !== 'all' ? (
-                        <View
-                          style={[
-                            styles.dot,
-                            { backgroundColor: PRIORITY_META[filter.key].dotColor },
-                          ]}
-                        />
-                      ) : null}
-                      <Text
-                        style={[
-                          styles.priorityFilterText,
-                          { color: active ? colors.text : colors.muted },
-                        ]}>
-                        {filter.label}
-                      </Text>
-                    </RipplePressable>
-                  );
-                })}
-              </View>
-            </View>
-          ) : completedTodos.length > 0 ? (
-            <View style={[styles.sectionToolbar, { borderBottomColor: colors.line }]}>
-              <Text style={[styles.sectionHeading, { color: colors.muted }]}>
-                Выполненные · {completedTodos.length}
-              </Text>
-              <RipplePressable
-                onPress={handleClearDone}
-                style={StyleSheet.flatten([
-                  styles.clearDoneBtn,
-                  { backgroundColor: confirmClearDone ? colors.danger : colors.dangerBg },
-                ])}>
-                <AppIcon
-                  name="trash"
-                  size="xs"
-                  color={confirmClearDone ? '#FFFFFF' : colors.danger}
-                />
-                <Text
-                  style={[
-                    styles.clearDoneLabel,
-                    { color: confirmClearDone ? '#FFFFFF' : colors.danger },
-                  ]}>
-                  {confirmClearDone ? 'Точно очистить все?' : 'Очистить всё'}
-                </Text>
-              </RipplePressable>
-            </View>
+            </>
           ) : null}
 
           {/* Task Stream: Active Section + Collapsible Completed Section */}
@@ -1421,6 +1472,173 @@ export function TodoWorkspace() {
         </View>
       </View>
 
+      {/* Mobile Priority Filter Popover */}
+      <AnchoredPopover
+        visible={mobilePriorityOpen}
+        anchor={mobilePriorityAnchor}
+        width={196}
+        estimatedHeight={180}
+        align="right"
+        colors={colors}
+        onClose={() => setMobilePriorityOpen(false)}>
+        <View style={styles.mobilePopoverBody}>
+          {PRIORITY_FILTERS.map((filter) => {
+            const active = priorityFilter === filter.key;
+            return (
+              <RipplePressable
+                key={filter.key}
+                onPress={() => {
+                  setPriorityFilter(filter.key);
+                  setMobilePriorityOpen(false);
+                }}
+                style={StyleSheet.flatten([
+                  styles.mobilePopoverRow,
+                  active ? { backgroundColor: colors.surfaceActive } : null,
+                ])}>
+                {filter.key !== 'all' ? (
+                  <View
+                    style={[
+                      styles.dot,
+                      { backgroundColor: PRIORITY_META[filter.key].dotColor },
+                    ]}
+                  />
+                ) : (
+                  <AppIcon name="filter" size="xs" color={colors.muted} />
+                )}
+                <Text style={[styles.mobilePopoverRowText, { color: colors.text }]}>
+                  {filter.fullLabel}
+                </Text>
+                {active ? <AppIcon name="check" size="xs" color={colors.text} /> : null}
+              </RipplePressable>
+            );
+          })}
+        </View>
+      </AnchoredPopover>
+
+      {/* Mobile Bottom Sheet for Smart Views & Lists */}
+      <Modal
+        visible={mobileNavOpen}
+        transparent
+        animationType="none"
+        onRequestClose={() => setMobileNavOpen(false)}>
+        <View style={styles.sheetRoot}>
+          <Pressable style={styles.sheetBackdrop} onPress={() => setMobileNavOpen(false)} />
+          <Animated.View
+            entering={SlideInDown.springify().damping(24).stiffness(260)}
+            style={[
+              styles.mobileNavSheet,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.line,
+                paddingBottom: Math.max(insets.bottom, 16),
+              },
+            ]}>
+            <View style={styles.sheetGrabberRow}>
+              <View style={[styles.sheetGrabber, { backgroundColor: colors.line }]} />
+            </View>
+
+            <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent}>
+              <Text style={[styles.sheetSectionLabel, { color: colors.muted }]}>Обзор</Text>
+              {SMART_FILTERS.map((item) => {
+                const active = view.kind === 'smart' && view.filter === item.key;
+                const count = counts[item.key];
+                return (
+                  <RipplePressable
+                    key={item.key}
+                    onPress={() => {
+                      setConfirmClearDone(false);
+                      setView({ kind: 'smart', filter: item.key });
+                      setMobileNavOpen(false);
+                    }}
+                    style={StyleSheet.flatten([
+                      styles.sheetRow,
+                      active ? { backgroundColor: colors.surfaceActive } : null,
+                    ])}>
+                    <AppIcon
+                      name={item.icon}
+                      size="sm"
+                      color={active ? colors.text : item.accent ?? colors.muted}
+                    />
+                    <Text
+                      style={[
+                        styles.sheetRowTitle,
+                        { color: active ? colors.text : colors.text },
+                      ]}>
+                      {item.label}
+                    </Text>
+                    {count > 0 ? (
+                      <Text style={[styles.sheetRowCount, { color: colors.muted }]}>{count}</Text>
+                    ) : null}
+                    {active ? <AppIcon name="check" size="xs" color={colors.text} /> : null}
+                  </RipplePressable>
+                );
+              })}
+
+              <View style={[styles.sheetDivider, { backgroundColor: colors.line }]} />
+
+              <View style={styles.sheetSectionHeader}>
+                <Text style={[styles.sheetSectionLabel, { color: colors.muted }]}>Мои списки</Text>
+                <RipplePressable
+                  onPress={() => {
+                    setMobileNavOpen(false);
+                    setListDialog({ open: true, mode: 'create', list: null });
+                  }}
+                  style={StyleSheet.flatten([
+                    styles.sheetAddListBtn,
+                    { backgroundColor: colors.surfaceSubtle },
+                  ])}>
+                  <AppIcon name="plus" size="xs" color={colors.text} />
+                  <Text style={[styles.sheetAddListText, { color: colors.text }]}>Новый</Text>
+                </RipplePressable>
+              </View>
+
+              {lists.map((list) => {
+                const active = view.kind === 'list' && view.listId === list.id;
+                const count = counts.byList.get(list.id) ?? 0;
+                return (
+                  <View
+                    key={list.id}
+                    style={[
+                      styles.sheetListRowWrap,
+                      active ? { backgroundColor: colors.surfaceActive } : null,
+                    ]}>
+                    <RipplePressable
+                      onPress={() => {
+                        setConfirmClearDone(false);
+                        setView({ kind: 'list', listId: list.id });
+                        setMobileNavOpen(false);
+                      }}
+                      style={styles.sheetListSelect}>
+                      <AppIcon
+                        name="list"
+                        size="sm"
+                        color={active ? colors.text : colors.muted}
+                      />
+                      <Text style={[styles.sheetRowTitle, { color: colors.text }]} numberOfLines={1}>
+                        {list.title}
+                      </Text>
+                      {count > 0 ? (
+                        <Text style={[styles.sheetRowCount, { color: colors.muted }]}>{count}</Text>
+                      ) : null}
+                    </RipplePressable>
+
+                    <RipplePressable
+                      accessibilityLabel={`Настроить список ${list.title}`}
+                      onPress={() => {
+                        setMobileNavOpen(false);
+                        setListDialog({ open: true, mode: 'edit', list });
+                      }}
+                      style={styles.sheetListEditBtn}>
+                      <AppIcon name="edit" size="xs" color={colors.muted} />
+                    </RipplePressable>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </Animated.View>
+        </View>
+      </Modal>
+
       {/* Modals */}
       <CreateTodoModal
         visible={createModalOpen}
@@ -1511,8 +1729,8 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
   },
   screenMobile: {
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
   },
   layout: {
     width: '100%',
@@ -1526,7 +1744,7 @@ const styles = StyleSheet.create({
   },
   layoutMobile: {
     flexDirection: 'column',
-    gap: 10,
+    gap: 0,
   },
   rail: {
     width: 248,
@@ -1534,6 +1752,19 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     padding: 12,
     gap: 12,
+  },
+  railPrimaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+  },
+  railPrimaryLabel: {
+    fontSize: 13,
+    fontWeight: '700',
   },
   railSection: {
     gap: 3,
@@ -1724,14 +1955,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  mobileSearchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 12,
-    height: 38,
-  },
   panel: {
     flex: 1,
     minWidth: 0,
@@ -1852,6 +2075,191 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  panelMobile: {
+    borderWidth: 0,
+    borderRadius: 0,
+    backgroundColor: 'transparent',
+  },
+  mobileCleanBarWrap: {
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 10,
+    gap: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  mobileCleanBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  mobileViewTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    height: 36,
+    paddingHorizontal: 11,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: '62%',
+  },
+  mobileViewTriggerText: {
+    fontSize: 14,
+    fontWeight: '700',
+    flexShrink: 1,
+  },
+  mobileViewTriggerCount: {
+    fontSize: 12,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  mobileCleanActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
+  },
+  mobileActiveFilterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  mobileActiveChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  mobileActiveChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  mobilePopoverBody: {
+    gap: 2,
+  },
+  mobilePopoverRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  mobilePopoverRowText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  sheetRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  sheetBackdrop: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(10, 12, 16, 0.5)',
+  },
+  mobileNavSheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    maxHeight: '78%',
+    overflow: 'hidden',
+  },
+  sheetGrabberRow: {
+    alignItems: 'center',
+    paddingTop: 10,
+    paddingBottom: 6,
+  },
+  sheetGrabber: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+  },
+  sheetScroll: {
+    maxHeight: 460,
+  },
+  sheetContent: {
+    paddingHorizontal: 14,
+    paddingBottom: 12,
+    gap: 3,
+  },
+  sheetSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingRight: 2,
+    marginBottom: 2,
+  },
+  sheetSectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  sheetAddListBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  sheetAddListText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  sheetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 11,
+    borderRadius: 10,
+  },
+  sheetRowTitle: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  sheetRowCount: {
+    fontSize: 12,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  sheetDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginVertical: 8,
+    marginHorizontal: 6,
+  },
+  sheetListRowWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 10,
+  },
+  sheetListSelect: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 11,
+    minWidth: 0,
+  },
+  sheetListEditBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 4,
   },
   disabled: {
     opacity: 0.35,

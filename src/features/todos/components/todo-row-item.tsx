@@ -632,9 +632,9 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    paddingVertical: 11,
-    paddingHorizontal: 12,
-    gap: 9,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    gap: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
     ...(Platform.OS === 'web'
       ? ({
@@ -664,9 +664,9 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as object) : null),
   },
   checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     borderWidth: 1.75,
     alignItems: 'center',
     justifyContent: 'center',

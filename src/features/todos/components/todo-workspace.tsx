@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -8,13 +10,21 @@ import {
   View,
 } from 'react-native';
 
+import { AppIcon, type IconName } from '@/components/app-icon';
+import { DragTrashZone } from '@/components/drag-trash-zone';
 import { RipplePressable } from '@/components/ripple-pressable';
+import { HistoryToast, UndoRedoButtons } from '@/components/undo-redo-bar';
+import { WebDragBox } from '@/components/web-drag-box';
 import { useDatabase } from '@/db/provider';
 import { useAuth } from '@/features/auth/auth-context';
 import { addDaysDateKey, PRIORITY_META } from '@/features/kanban/types';
+import { CreateTodoModal } from '@/features/todos/components/create-todo-modal';
 import { TodoDetailModal } from '@/features/todos/components/todo-detail-modal';
 import { TodoListDialog } from '@/features/todos/components/todo-list-dialog';
-import { TodoRowItem } from '@/features/todos/components/todo-row-item';
+import {
+  type TodoDropPosition,
+  TodoRowItem,
+} from '@/features/todos/components/todo-row-item';
 import {
   type BoardColumnOption,
   clearCompletedTodos,
@@ -26,6 +36,9 @@ import {
   listKanbanTargets,
   loadTodoWorkspace,
   renameTodoList,
+  reorderTodoLists,
+  reorderTodos,
+  restoreTodoSnapshot,
   sendTodoToKanban,
   toggleTodoDone,
   unlinkTodoFromKanban,
@@ -38,21 +51,68 @@ import type {
   TodoSmartFilter,
   TodoViewSelection,
 } from '@/features/todos/types';
+import { useUndoRedoHotkeys } from '@/hooks/use-undo-redo';
 import { useThemeColors, useViewport } from '@/theme/colors';
+
+type PriorityFilter = 'all' | TodoPriority;
 
 const SMART_FILTERS: readonly {
   key: TodoSmartFilter;
   label: string;
-  badge: string;
+  subtitle: string;
+  icon: IconName;
+  accent?: string;
 }[] = [
-  { key: 'all', label: 'Все', badge: '◎' },
-  { key: 'today', label: 'Сегодня', badge: '☀' },
-  { key: 'upcoming', label: 'Предстоящие', badge: '◷' },
-  { key: 'board', label: 'На доске', badge: '▦' },
-  { key: 'done', label: 'Выполненные', badge: '✓' },
+  {
+    key: 'today',
+    label: 'Сегодня',
+    subtitle: 'Задачи на сегодня и просроченные',
+    icon: 'sun',
+    accent: '#E6A23C',
+  },
+  {
+    key: 'all',
+    label: 'Все задачи',
+    subtitle: 'Все задачи из всех ваших списков',
+    icon: 'circle',
+  },
+  {
+    key: 'upcoming',
+    label: 'Предстоящие',
+    subtitle: 'Все задачи с назначенным сроком',
+    icon: 'clock',
+    accent: '#4E86F0',
+  },
+  {
+    key: 'board',
+    label: 'На доске',
+    subtitle: 'Задачи, синхронизированные с Kanban',
+    icon: 'kanban',
+    accent: '#9B6AF5',
+  },
+  {
+    key: 'done',
+    label: 'Выполненные',
+    subtitle: 'Завершённые задачи — можно вернуть или очистить',
+    icon: 'checkCircle',
+    accent: '#4CC38A',
+  },
 ];
 
-const PRIORITY_CYCLE: readonly TodoPriority[] = ['medium', 'high', 'low'];
+const PRIORITY_FILTERS: readonly { key: PriorityFilter; label: string }[] = [
+  { key: 'all', label: 'Все' },
+  { key: 'high', label: 'Высок.' },
+  { key: 'medium', label: 'Обыч.' },
+  { key: 'low', label: 'Низк.' },
+];
+
+type TodoHistoryEntry = {
+  label: string;
+  lists: TodoListRecord[];
+  todos: TodoItemRecord[];
+};
+
+const DROP_BLUE = '#2383E2';
 
 export function TodoWorkspace() {
   const db = useDatabase();
@@ -67,20 +127,85 @@ export function TodoWorkspace() {
   const [loading, setLoading] = useState(true);
 
   const [view, setView] = useState<TodoViewSelection>({ kind: 'smart', filter: 'all' });
+  const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all');
   const [search, setSearch] = useState('');
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [showCompletedInView, setShowCompletedInView] = useState(false);
 
-  const [draft, setDraft] = useState('');
-  const [draftPriority, setDraftPriority] = useState<TodoPriority>('medium');
-  const [draftDueDate, setDraftDueDate] = useState<string | null>(null);
-
+  const [quickDraft, setQuickDraft] = useState('');
+  const [createModalOpen, setCreateModalOpen] = useState(false);
   const [selectedTodoId, setSelectedTodoId] = useState<string | null>(null);
   const [confirmClearDone, setConfirmClearDone] = useState(false);
+  const [hoveredListId, setHoveredListId] = useState<string | null>(null);
+
+  const [draggingTodoId, setDraggingTodoId] = useState<string | null>(null);
+  const [todoDropTarget, setTodoDropTarget] = useState<{
+    todoId: string;
+    position: TodoDropPosition;
+  } | null>(null);
+  const [dropSmartFilter, setDropSmartFilter] = useState<TodoSmartFilter | null>(null);
+  const [dropListId, setDropListId] = useState<string | null>(null);
+  const [draggingListId, setDraggingListId] = useState<string | null>(null);
+  const [listDropTarget, setListDropTarget] = useState<{
+    listId: string;
+    position: TodoDropPosition;
+  } | null>(null);
+
   const [listDialog, setListDialog] = useState<{
     open: boolean;
     mode: 'create' | 'edit';
     list: TodoListRecord | null;
   }>({ open: false, mode: 'create', list: null });
+
+  const [historyMeta, setHistoryMeta] = useState({ canUndo: false, canRedo: false });
+  const [historyToast, setHistoryToast] = useState<string | null>(null);
+  const historyRef = useRef<{ past: TodoHistoryEntry[]; future: TodoHistoryEntry[] }>({
+    past: [],
+    future: [],
+  });
+  const stateRef = useRef<{ lists: TodoListRecord[]; todos: TodoItemRecord[] }>({
+    lists: [],
+    todos: [],
+  });
+  const restoringRef = useRef(false);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    stateRef.current = { lists, todos };
+  }, [lists, todos]);
+
+  const showHistoryToast = useCallback((message: string) => {
+    setHistoryToast(message);
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = setTimeout(() => {
+      setHistoryToast(null);
+      toastTimerRef.current = null;
+    }, 1800);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
+
+  const pushTodoHistory = useCallback((label: string) => {
+    const { lists: curLists, todos: curTodos } = stateRef.current;
+    historyRef.current.past.push({
+      label,
+      lists: curLists.map((l) => ({ ...l })),
+      todos: curTodos.map((t) => ({ ...t })),
+    });
+    if (historyRef.current.past.length > 40) {
+      historyRef.current.past.shift();
+    }
+    historyRef.current.future = [];
+    setHistoryMeta({ canUndo: historyRef.current.past.length > 0, canRedo: false });
+  }, []);
 
   const todayKey = addDaysDateKey(0);
   const tomorrowKey = addDaysDateKey(1);
@@ -110,13 +235,12 @@ export function TodoWorkspace() {
         loadTodoWorkspace(db, userId),
         listKanbanTargets(db, userId),
       ]);
-      if (cancelled) {
-        return;
+      if (!cancelled) {
+        setLists(workspace.lists);
+        setTodos(workspace.todos);
+        setKanbanTargets(targets);
+        setLoading(false);
       }
-      setLists(workspace.lists);
-      setTodos(workspace.todos);
-      setKanbanTargets(targets);
-      setLoading(false);
     }
 
     init();
@@ -135,108 +259,249 @@ export function TodoWorkspace() {
   }, [lists]);
 
   const counts = useMemo(() => {
-    const open = todos.filter((item) => !item.isDone);
-    const done = todos.filter((item) => item.isDone);
-    const today = open.filter((item) => item.dueDate !== null && item.dueDate <= todayKey);
-    const upcoming = open.filter((item) => item.dueDate !== null);
-    const board = todos.filter((item) => item.linkedCard !== null);
-
+    let allActive = 0;
+    let today = 0;
+    let upcoming = 0;
+    let board = 0;
+    let done = 0;
     const byList = new Map<string, number>();
-    for (const item of open) {
+
+    for (const item of todos) {
+      if (item.isDone) {
+        done += 1;
+        continue;
+      }
+      allActive += 1;
+      if (item.dueDate && item.dueDate <= todayKey) {
+        today += 1;
+      }
+      if (item.dueDate) {
+        upcoming += 1;
+      }
+      if (item.linkedCardId) {
+        board += 1;
+      }
       if (item.listId) {
         byList.set(item.listId, (byList.get(item.listId) ?? 0) + 1);
       }
     }
 
-    return {
-      all: open.length,
-      today: today.length,
-      upcoming: upcoming.length,
-      board: board.length,
-      done: done.length,
-      byList,
-    };
+    return { all: allActive, today, upcoming, board, done, byList };
   }, [todos, todayKey]);
 
   const normalizedSearch = search.trim().toLowerCase();
 
-  const visibleTodos = useMemo(() => {
-    return todos.filter((item) => {
-      if (view.kind === 'smart') {
-        if (view.filter === 'all' && item.isDone) {
-          return false;
-        }
-        if (view.filter === 'today' && (item.isDone || !item.dueDate || item.dueDate > todayKey)) {
-          return false;
-        }
-        if (view.filter === 'upcoming' && (item.isDone || !item.dueDate)) {
-          return false;
-        }
-        if (view.filter === 'board' && !item.linkedCard) {
-          return false;
-        }
-        if (view.filter === 'done' && !item.isDone) {
-          return false;
-        }
-      } else if (item.listId !== view.listId) {
-        return false;
-      }
+  // Separate active & completed items clearly for the active view
+  const { activeTodos, completedTodos } = useMemo(() => {
+    const active: TodoItemRecord[] = [];
+    const completed: TodoItemRecord[] = [];
 
+    for (const item of todos) {
       if (normalizedSearch.length > 0) {
         const hay = `${item.title} ${item.notes}`.toLowerCase();
         if (!hay.includes(normalizedSearch)) {
-          return false;
+          continue;
         }
       }
 
-      return true;
-    });
-  }, [todos, view, todayKey, normalizedSearch]);
+      if (priorityFilter !== 'all' && !item.isDone && item.priority !== priorityFilter) {
+        continue;
+      }
+
+      if (view.kind === 'list') {
+        if (item.listId !== view.listId) {
+          continue;
+        }
+        if (item.isDone) {
+          completed.push(item);
+        } else {
+          active.push(item);
+        }
+        continue;
+      }
+
+      switch (view.filter) {
+        case 'all':
+          if (item.isDone) {
+            completed.push(item);
+          } else {
+            active.push(item);
+          }
+          break;
+        case 'today':
+          if (!item.isDone && item.dueDate !== null && item.dueDate <= todayKey) {
+            active.push(item);
+          }
+          break;
+        case 'upcoming':
+          if (!item.isDone && item.dueDate !== null) {
+            active.push(item);
+          }
+          break;
+        case 'board':
+          if (item.linkedCardId !== null) {
+            if (item.isDone) {
+              completed.push(item);
+            } else {
+              active.push(item);
+            }
+          }
+          break;
+        case 'done':
+          if (item.isDone) {
+            completed.push(item);
+          }
+          break;
+      }
+    }
+
+    return { activeTodos: active, completedTodos: completed };
+  }, [todos, view, normalizedSearch, priorityFilter, todayKey]);
 
   const selectedTodo = useMemo(
     () => todos.find((item) => item.id === selectedTodoId) ?? null,
     [todos, selectedTodoId],
   );
 
-  const activeList =
-    view.kind === 'list' ? lists.find((list) => list.id === view.listId) ?? null : null;
+  const activeList = useMemo(
+    () => (view.kind === 'list' ? lists.find((l) => l.id === view.listId) ?? null : null),
+    [lists, view],
+  );
 
-  const activeTitle =
-    view.kind === 'list'
-      ? activeList?.title ?? 'Список'
-      : SMART_FILTERS.find((item) => item.key === view.filter)?.label ?? 'Задачи';
+  const activeSmartMeta = useMemo(
+    () =>
+      view.kind === 'smart'
+        ? SMART_FILTERS.find((item) => item.key === view.filter) ?? SMART_FILTERS[0]
+        : null,
+    [view],
+  );
 
-  function cycleDraftPriority() {
-    const idx = PRIORITY_CYCLE.indexOf(draftPriority);
-    setDraftPriority(PRIORITY_CYCLE[(idx + 1) % PRIORITY_CYCLE.length]);
-  }
+  const targetListForNewTask = activeList ?? lists[0] ?? null;
+  const isDoneOnlyView = view.kind === 'smart' && view.filter === 'done';
+  const showQuickAdd = !(view.kind === 'smart' && (view.filter === 'done' || view.filter === 'board'));
+  const showListBadges = view.kind === 'smart';
 
-  async function handleAddTodo() {
-    const title = draft.trim();
+  const headerTitle = activeList ? activeList.title : activeSmartMeta?.label ?? 'Задачи';
+  const headerSubtitle = activeList
+    ? `Список · ${activeTodos.length} активных${completedTodos.length > 0 ? `, ${completedTodos.length} выполнено` : ''}`
+    : activeSmartMeta?.subtitle ?? '';
+
+  const handleUndoTodo = useCallback(async () => {
+    if (!userId || restoringRef.current || historyRef.current.past.length === 0) {
+      return;
+    }
+    restoringRef.current = true;
+    try {
+      const previous = historyRef.current.past.pop()!;
+      const { lists: curLists, todos: curTodos } = stateRef.current;
+      historyRef.current.future.push({
+        label: previous.label,
+        lists: curLists.map((l) => ({ ...l })),
+        todos: curTodos.map((t) => ({ ...t })),
+      });
+      await restoreTodoSnapshot(db, userId, previous);
+      await refreshAll();
+      setHistoryMeta({
+        canUndo: historyRef.current.past.length > 0,
+        canRedo: historyRef.current.future.length > 0,
+      });
+      showHistoryToast(`Отменено: ${previous.label}`);
+    } finally {
+      restoringRef.current = false;
+    }
+  }, [db, refreshAll, showHistoryToast, userId]);
+
+  const handleRedoTodo = useCallback(async () => {
+    if (!userId || restoringRef.current || historyRef.current.future.length === 0) {
+      return;
+    }
+    restoringRef.current = true;
+    try {
+      const next = historyRef.current.future.pop()!;
+      const { lists: curLists, todos: curTodos } = stateRef.current;
+      historyRef.current.past.push({
+        label: next.label,
+        lists: curLists.map((l) => ({ ...l })),
+        todos: curTodos.map((t) => ({ ...t })),
+      });
+      await restoreTodoSnapshot(db, userId, next);
+      await refreshAll();
+      setHistoryMeta({
+        canUndo: historyRef.current.past.length > 0,
+        canRedo: historyRef.current.future.length > 0,
+      });
+      showHistoryToast(`Возвращено: ${next.label}`);
+    } finally {
+      restoringRef.current = false;
+    }
+  }, [db, refreshAll, showHistoryToast, userId]);
+
+  useUndoRedoHotkeys({
+    enabled: Boolean(userId) && !listDialog.open && !createModalOpen,
+    ignoreInsideInputs: true,
+    onUndo: () => {
+      handleUndoTodo();
+    },
+    onRedo: () => {
+      handleRedoTodo();
+    },
+  });
+
+  async function handleQuickAddTodo() {
+    const title = quickDraft.trim();
     if (!title) {
       return;
     }
 
-    const resolvedListId =
-      view.kind === 'list' ? view.listId : lists[0]?.id ?? null;
+    const resolvedListId = targetListForNewTask?.id ?? null;
     const resolvedDueDate =
-      draftDueDate ?? (view.kind === 'smart' && view.filter === 'today' ? todayKey : null);
+      view.kind === 'smart' && view.filter === 'today'
+        ? todayKey
+        : view.kind === 'smart' && view.filter === 'upcoming'
+          ? tomorrowKey
+          : null;
 
-    setDraft('');
-    setDraftPriority('medium');
-    setDraftDueDate(null);
-
+    setQuickDraft('');
+    pushTodoHistory('Добавление задачи');
     await createTodo(db, userId, {
       title,
       listId: resolvedListId,
-      priority: draftPriority,
+      priority: priorityFilter === 'all' ? 'medium' : priorityFilter,
       dueDate: resolvedDueDate,
     });
     await refreshAll();
   }
 
+  async function handleCreateDetailedTodo(input: {
+    title: string;
+    notes: string;
+    listId: string | null;
+    priority: TodoPriority;
+    dueDate: string | null;
+  }) {
+    pushTodoHistory('Создание задачи');
+    await createTodo(db, userId, input);
+    await refreshAll();
+  }
+
   async function handleToggleDone(todoId: string, isDone: boolean) {
+    pushTodoHistory(isDone ? 'Выполнение задачи' : 'Возврат задачи');
     await toggleTodoDone(db, todoId, isDone);
+    await refreshAll();
+  }
+
+  async function handleQuickUpdateTodo(
+    todoId: string,
+    patch: { priority?: TodoPriority; listId?: string | null; dueDate?: string | null },
+  ) {
+    pushTodoHistory(
+      patch.priority !== undefined
+        ? 'Смена приоритета'
+        : patch.listId !== undefined
+          ? 'Перенос в список'
+          : 'Изменение срока',
+    );
+    await updateTodo(db, todoId, patch);
     await refreshAll();
   }
 
@@ -250,12 +515,114 @@ export function TodoWorkspace() {
       dueDate: string | null;
     },
   ) {
+    pushTodoHistory('Редактирование задачи');
     await updateTodo(db, todoId, patch);
     await refreshAll();
   }
 
   async function handleDeleteTodo(todoId: string) {
+    pushTodoHistory('Удаление задачи');
     await deleteTodo(db, todoId);
+    await refreshAll();
+  }
+
+  async function handleDropTodoOnTodo(
+    draggedId: string,
+    targetId: string,
+    position: TodoDropPosition,
+  ) {
+    setDraggingTodoId(null);
+    setTodoDropTarget(null);
+    if (!userId || draggedId === targetId) {
+      return;
+    }
+
+    const dragged = todos.find((item) => item.id === draggedId);
+    const target = todos.find((item) => item.id === targetId);
+    if (!dragged || !target) {
+      return;
+    }
+
+    const remaining = todos.filter((item) => item.id !== draggedId);
+    const targetIdx = remaining.findIndex((item) => item.id === targetId);
+    if (targetIdx === -1) {
+      return;
+    }
+    const insertAt = position === 'before' ? targetIdx : targetIdx + 1;
+    const orderedIds = remaining.map((item) => item.id);
+    orderedIds.splice(insertAt, 0, draggedId);
+
+    pushTodoHistory('Порядок задач');
+    if (dragged.isDone !== target.isDone) {
+      await toggleTodoDone(db, draggedId, target.isDone);
+    }
+    await reorderTodos(db, userId, orderedIds);
+    await refreshAll();
+  }
+
+  async function handleDropTodoOnSmartFilter(todoId: string, filter: TodoSmartFilter) {
+    setDraggingTodoId(null);
+    setDropSmartFilter(null);
+    const todo = todos.find((item) => item.id === todoId);
+    if (!todo) {
+      return;
+    }
+
+    pushTodoHistory('Перенос задачи');
+    if (filter === 'today') {
+      if (todo.isDone) {
+        await toggleTodoDone(db, todoId, false);
+      }
+      await updateTodo(db, todoId, { dueDate: todayKey });
+    } else if (filter === 'upcoming') {
+      if (todo.isDone) {
+        await toggleTodoDone(db, todoId, false);
+      }
+      if (!todo.dueDate) {
+        await updateTodo(db, todoId, { dueDate: tomorrowKey });
+      }
+    } else if (filter === 'done') {
+      if (!todo.isDone) {
+        await toggleTodoDone(db, todoId, true);
+      }
+    } else if (filter === 'all') {
+      if (todo.isDone) {
+        await toggleTodoDone(db, todoId, false);
+      }
+    } else {
+      return;
+    }
+    await refreshAll();
+  }
+
+  async function handleDropTodoOnList(todoId: string, targetListId: string) {
+    setDraggingTodoId(null);
+    setDropListId(null);
+    pushTodoHistory('Перенос в список');
+    await updateTodo(db, todoId, { listId: targetListId });
+    await refreshAll();
+  }
+
+  async function handleDropListOnList(
+    draggedId: string,
+    targetId: string,
+    position: TodoDropPosition,
+  ) {
+    setDraggingListId(null);
+    setListDropTarget(null);
+    if (!userId || draggedId === targetId) {
+      return;
+    }
+    const remaining = lists.filter((item) => item.id !== draggedId);
+    const targetIdx = remaining.findIndex((item) => item.id === targetId);
+    if (targetIdx === -1) {
+      return;
+    }
+    const insertAt = position === 'before' ? targetIdx : targetIdx + 1;
+    const orderedIds = remaining.map((item) => item.id);
+    orderedIds.splice(insertAt, 0, draggedId);
+    pushTodoHistory('Порядок списков');
+    await reorderTodoLists(db, userId, orderedIds);
     await refreshAll();
   }
 
@@ -275,11 +642,13 @@ export function TodoWorkspace() {
       return;
     }
     setConfirmClearDone(false);
+    pushTodoHistory('Очистка выполненных');
     await clearCompletedTodos(db, userId);
     await refreshAll();
   }
 
   async function handleListSubmit(title: string) {
+    pushTodoHistory(listDialog.mode === 'create' ? 'Создание списка' : 'Переименование списка');
     if (listDialog.mode === 'create') {
       const created = await createTodoList(db, userId, title);
       await refreshAll();
@@ -295,6 +664,7 @@ export function TodoWorkspace() {
       return;
     }
     const deletedId = listDialog.list.id;
+    pushTodoHistory('Удаление списка');
     await deleteTodoList(db, deletedId);
     if (view.kind === 'list' && view.listId === deletedId) {
       setView({ kind: 'smart', filter: 'all' });
@@ -303,24 +673,63 @@ export function TodoWorkspace() {
   }
 
   function getEmptyMessage(): string {
-    if (normalizedSearch.length > 0) {
-      return 'Ничего не найдено по запросу';
+    if (normalizedSearch.length > 0 || priorityFilter !== 'all') {
+      return 'По выбранным фильтрам задач не найдено';
     }
     if (view.kind === 'list') {
-      return 'В этом списке пока нет задач';
+      return `В списке «${activeList?.title ?? ''}» пока нет активных задач`;
     }
     switch (view.filter) {
       case 'today':
-        return 'На сегодня задач нет — можно выдохнуть';
+        return 'На сегодня всё чисто — можно выдохнуть';
       case 'upcoming':
         return 'Задач со сроком пока нет';
       case 'board':
-        return 'Нет задач, связанных с Канбаном. Откройте любую задачу и нажмите «Отправить на доску».';
+        return 'Нет задач, связанных с Kanban. Откройте задачу и нажмите «Отправить на доску».';
       case 'done':
         return 'Выполненных задач пока нет';
       default:
-        return 'Пока пусто — добавьте первую задачу выше';
+        return 'Нет активных задач — добавьте первую выше';
     }
+  }
+
+  function renderTodoRow(todo: TodoItemRecord) {
+    return (
+      <TodoRowItem
+        key={todo.id}
+        todo={todo}
+        lists={lists}
+        listTitle={showListBadges && todo.listId ? listTitleById.get(todo.listId) : null}
+        colors={colors}
+        isDesktop={isDesktop}
+        isDragging={draggingTodoId === todo.id}
+        isTodoDragActive={draggingTodoId !== null}
+        dropIndicator={todoDropTarget?.todoId === todo.id ? todoDropTarget.position : null}
+        onToggle={() => handleToggleDone(todo.id, !todo.isDone)}
+        onPress={() => setSelectedTodoId(todo.id)}
+        onQuickUpdate={(patch) => handleQuickUpdateTodo(todo.id, patch)}
+        onDelete={() => handleDeleteTodo(todo.id)}
+        onDragStart={(id) => {
+          setDraggingListId(null);
+          setListDropTarget(null);
+          setDraggingTodoId(id);
+        }}
+        onDragEnd={() => {
+          setDraggingTodoId(null);
+          setTodoDropTarget(null);
+          setDropSmartFilter(null);
+          setDropListId(null);
+        }}
+        onDragOverTodo={(targetId, pos) => {
+          setTodoDropTarget((prev) =>
+            prev?.todoId === targetId && prev.position === pos
+              ? prev
+              : { todoId: targetId, position: pos },
+          );
+        }}
+        onDropOnTodo={handleDropTodoOnTodo}
+      />
+    );
   }
 
   if (loading) {
@@ -331,102 +740,271 @@ export function TodoWorkspace() {
     );
   }
 
-  const showComposer = !(view.kind === 'smart' && (view.filter === 'done' || view.filter === 'board'));
-  const showListBadges = view.kind === 'smart';
-
   return (
     <View style={[styles.screen, isDesktop ? styles.screenDesktop : styles.screenMobile]}>
       <View style={[styles.layout, isDesktop ? styles.layoutDesktop : styles.layoutMobile]}>
-        {/* Left Navigation Rail (Desktop) OR Compact Strips (Mobile) */}
+        {/* Left Navigation Rail (Desktop) OR Clear 2-Tier Strips (Mobile) */}
         {isDesktop ? (
           <View
             style={[
               styles.rail,
               { backgroundColor: colors.surface, borderColor: colors.line },
             ]}>
+            {/* Section 1: Smart Overview */}
             <View style={styles.railSection}>
-              <Text style={[styles.railCaption, { color: colors.muted }]}>Фильтры</Text>
+              <Text style={[styles.railCaption, { color: colors.muted }]}>Обзор</Text>
               {SMART_FILTERS.map((item) => {
                 const active = view.kind === 'smart' && view.filter === item.key;
                 const count = counts[item.key];
+                const canDropTodo = draggingTodoId !== null && item.key !== 'board';
+                const isDropHere = dropSmartFilter === item.key && canDropTodo;
+                const iconColor = active
+                  ? item.accent ?? colors.text
+                  : item.accent ?? colors.muted;
                 return (
-                  <RipplePressable
+                  <WebDragBox
                     key={item.key}
-                    onPress={() => {
-                      setConfirmClearDone(false);
-                      setView({ kind: 'smart', filter: item.key });
+                    onDragOver={(event) => {
+                      if (!canDropTodo) return;
+                      event.preventDefault();
+                      if (event.dataTransfer) {
+                        event.dataTransfer.dropEffect = 'move';
+                      }
+                      if (dropSmartFilter !== item.key) {
+                        setDropSmartFilter(item.key);
+                      }
                     }}
-                    style={StyleSheet.flatten([
-                      styles.railItem,
-                      active ? { backgroundColor: colors.surfaceActive } : null,
-                    ])}>
-                    <Text
-                      style={[
-                        styles.railBadge,
-                        { color: active ? colors.text : colors.muted },
-                      ]}>
-                      {item.badge}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.railLabel,
-                        { color: active ? colors.text : colors.muted },
-                      ]}>
-                      {item.label}
-                    </Text>
-                    <Text style={[styles.railCount, { color: colors.muted }]}>{count}</Text>
-                  </RipplePressable>
+                    onDragLeave={() => {
+                      setDropSmartFilter((prev) => (prev === item.key ? null : prev));
+                    }}
+                    onDrop={(event) => {
+                      if (!canDropTodo) return;
+                      event.preventDefault();
+                      const draggedId =
+                        event.dataTransfer?.getData('text/sotaq-todo') || draggingTodoId;
+                      if (draggedId) {
+                        handleDropTodoOnSmartFilter(draggedId, item.key);
+                      }
+                    }}>
+                    <RipplePressable
+                      onPress={() => {
+                        setConfirmClearDone(false);
+                        setView({ kind: 'smart', filter: item.key });
+                      }}
+                      style={StyleSheet.flatten([
+                        styles.railItem,
+                        active ? { backgroundColor: colors.surfaceActive } : null,
+                        isDropHere ? styles.railDropTarget : null,
+                      ])}>
+                      <AppIcon name={item.icon} size="sm" color={iconColor} />
+                      <Text
+                        style={[
+                          styles.railLabel,
+                          { color: active || isDropHere ? colors.text : colors.muted },
+                        ]}
+                        numberOfLines={1}>
+                        {item.label}
+                      </Text>
+                      {count > 0 ? (
+                        <View
+                          style={[
+                            styles.railCountPill,
+                            {
+                              backgroundColor: active
+                                ? colors.surface
+                                : colors.surfaceSubtle,
+                            },
+                          ]}>
+                          <Text
+                            style={[
+                              styles.railCount,
+                              { color: active ? colors.text : colors.muted },
+                            ]}>
+                            {count}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </RipplePressable>
+                  </WebDragBox>
                 );
               })}
             </View>
 
             <View style={[styles.railDivider, { backgroundColor: colors.line }]} />
 
-            <View style={styles.railSection}>
+            {/* Section 2: User Custom Lists */}
+            <View style={[styles.railSection, styles.railListsFlex]}>
               <View style={styles.railHeaderRow}>
-                <Text style={[styles.railCaption, { color: colors.muted }]}>Списки</Text>
+                <Text style={[styles.railCaption, { color: colors.muted }]}>Мои списки</Text>
                 <RipplePressable
                   accessibilityLabel="Новый список"
                   onPress={() => setListDialog({ open: true, mode: 'create', list: null })}
                   style={styles.railAddBtn}>
-                  <Text style={[styles.railAddGlyph, { color: colors.muted }]}>+</Text>
+                  <AppIcon name="plus" size="sm" color={colors.muted} />
                 </RipplePressable>
               </View>
 
-              {lists.map((list) => {
-                const active = view.kind === 'list' && view.listId === list.id;
-                const count = counts.byList.get(list.id) ?? 0;
-                return (
-                  <RipplePressable
-                    key={list.id}
-                    onPress={() => {
-                      setConfirmClearDone(false);
-                      setView({ kind: 'list', listId: list.id });
-                    }}
-                    style={StyleSheet.flatten([
-                      styles.railItem,
-                      active ? { backgroundColor: colors.surfaceActive } : null,
-                    ])}>
-                    <Text
-                      style={[
-                        styles.railBadge,
-                        { color: active ? colors.text : colors.muted },
-                      ]}>
-                      •
-                    </Text>
-                    <Text
-                      style={[
-                        styles.railLabel,
-                        { color: active ? colors.text : colors.muted },
-                      ]}
-                      numberOfLines={1}>
-                      {list.title}
-                    </Text>
-                    <Text style={[styles.railCount, { color: colors.muted }]}>{count}</Text>
-                  </RipplePressable>
-                );
-              })}
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.railListsScroll}>
+                {lists.map((list) => {
+                  const active = view.kind === 'list' && view.listId === list.id;
+                  const count = counts.byList.get(list.id) ?? 0;
+                  const isHovered = hoveredListId === list.id;
+                  const isTodoDropHere = dropListId === list.id && draggingTodoId !== null;
+                  const listDropPos =
+                    listDropTarget?.listId === list.id && draggingListId !== null
+                      ? listDropTarget.position
+                      : null;
+                  return (
+                    <View key={list.id} style={styles.railListItemWrap}>
+                      {listDropPos === 'before' ? <View style={styles.railDropLine} /> : null}
+                      <WebDragBox
+                        draggable={Platform.OS === 'web'}
+                        onPointerEnter={() => setHoveredListId(list.id)}
+                        onPointerLeave={() =>
+                          setHoveredListId((prev) => (prev === list.id ? null : prev))
+                        }
+                        onDragStart={(event) => {
+                          event.stopPropagation();
+                          if (event.dataTransfer) {
+                            event.dataTransfer.setData('text/sotaq-todo-list', list.id);
+                            event.dataTransfer.effectAllowed = 'move';
+                          }
+                          setDraggingTodoId(null);
+                          setDraggingListId(list.id);
+                        }}
+                        onDragEnd={() => {
+                          setDraggingListId(null);
+                          setListDropTarget(null);
+                        }}
+                        onDragOver={(event) => {
+                          if (draggingTodoId) {
+                            event.preventDefault();
+                            if (event.dataTransfer) {
+                              event.dataTransfer.dropEffect = 'move';
+                            }
+                            if (dropListId !== list.id) {
+                              setDropListId(list.id);
+                            }
+                            return;
+                          }
+                          if (draggingListId && draggingListId !== list.id) {
+                            event.preventDefault();
+                            if (event.dataTransfer) {
+                              event.dataTransfer.dropEffect = 'move';
+                            }
+                            const target = event.currentTarget as HTMLElement | null;
+                            const rect = target?.getBoundingClientRect?.();
+                            const pos: TodoDropPosition =
+                              rect && event.clientY - rect.top < rect.height * 0.5
+                                ? 'before'
+                                : 'after';
+                            setListDropTarget((prev) =>
+                              prev?.listId === list.id && prev.position === pos
+                                ? prev
+                                : { listId: list.id, position: pos },
+                            );
+                          }
+                        }}
+                        onDragLeave={() => {
+                          setDropListId((prev) => (prev === list.id ? null : prev));
+                          setListDropTarget((prev) => (prev?.listId === list.id ? null : prev));
+                        }}
+                        onDrop={(event) => {
+                          if (draggingTodoId) {
+                            event.preventDefault();
+                            const draggedId =
+                              event.dataTransfer?.getData('text/sotaq-todo') || draggingTodoId;
+                            if (draggedId) {
+                              handleDropTodoOnList(draggedId, list.id);
+                            }
+                            return;
+                          }
+                          if (draggingListId) {
+                            event.preventDefault();
+                            const draggedId =
+                              event.dataTransfer?.getData('text/sotaq-todo-list') || draggingListId;
+                            if (draggedId && draggedId !== list.id) {
+                              handleDropListOnList(draggedId, list.id, listDropPos ?? 'after');
+                            } else {
+                              setDraggingListId(null);
+                              setListDropTarget(null);
+                            }
+                          }
+                        }}
+                        style={[
+                          styles.railListRow,
+                          active ? { backgroundColor: colors.surfaceActive } : null,
+                          isHovered && !active ? { backgroundColor: colors.surfaceSubtle } : null,
+                          isTodoDropHere ? styles.railDropTarget : null,
+                          draggingListId === list.id ? styles.draggingList : null,
+                        ]}>
+                        <Pressable
+                          onPress={() => {
+                            setConfirmClearDone(false);
+                            setView({ kind: 'list', listId: list.id });
+                          }}
+                          style={styles.railListMain}>
+                          <AppIcon
+                            name="list"
+                            size="sm"
+                            color={active || isTodoDropHere ? colors.text : colors.muted}
+                          />
+                          <Text
+                            style={[
+                              styles.railLabel,
+                              { color: active || isTodoDropHere || isHovered ? colors.text : colors.muted },
+                            ]}
+                            numberOfLines={1}>
+                            {list.title}
+                          </Text>
+                        </Pressable>
+
+                        {isHovered ? (
+                          <RipplePressable
+                            accessibilityLabel={`Настроить список «${list.title}»`}
+                            hitSlop={4}
+                            onPress={() => setListDialog({ open: true, mode: 'edit', list })}
+                            style={styles.railListEditBtn}>
+                            <AppIcon name="more" size="xs" color={colors.muted} />
+                          </RipplePressable>
+                        ) : count > 0 ? (
+                          <View
+                            style={[
+                              styles.railCountPill,
+                              {
+                                backgroundColor: active
+                                  ? colors.surface
+                                  : colors.surfaceSubtle,
+                              },
+                            ]}>
+                            <Text
+                              style={[
+                                styles.railCount,
+                                { color: active ? colors.text : colors.muted },
+                              ]}>
+                              {count}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </WebDragBox>
+                      {listDropPos === 'after' ? <View style={styles.railDropLine} /> : null}
+                    </View>
+                  );
+                })}
+              </ScrollView>
             </View>
+
+            {draggingTodoId ? (
+              <View
+                style={[
+                  styles.railDragHint,
+                  { backgroundColor: 'rgba(35, 131, 226, 0.1)', borderColor: DROP_BLUE },
+                ]}>
+                <Text style={[styles.railDragHintText, { color: colors.text }]}>
+                  Бросьте на список или фильтр
+                </Text>
+              </View>
+            ) : null}
           </View>
         ) : (
           <View style={styles.mobileFiltersWrap}>
@@ -452,6 +1030,11 @@ export function TodoWorkspace() {
                           borderColor: active ? colors.accent : colors.line,
                         },
                       ])}>
+                      <AppIcon
+                        name={item.icon}
+                        size="xs"
+                        color={active ? colors.accentText : item.accent ?? colors.muted}
+                      />
                       <Text
                         style={[
                           styles.mobilePillText,
@@ -459,13 +1042,15 @@ export function TodoWorkspace() {
                         ]}>
                         {item.label}
                       </Text>
-                      <Text
-                        style={[
-                          styles.mobilePillCount,
-                          { color: active ? colors.accentText : colors.muted },
-                        ]}>
-                        {count}
-                      </Text>
+                      {count > 0 ? (
+                        <Text
+                          style={[
+                            styles.mobilePillCount,
+                            { color: active ? colors.accentText : colors.muted },
+                          ]}>
+                          {count}
+                        </Text>
+                      ) : null}
                     </RipplePressable>
                   );
                 })}
@@ -483,23 +1068,21 @@ export function TodoWorkspace() {
                       mobileSearchOpen || search.length > 0 ? colors.accent : colors.line,
                   },
                 ])}>
-                <Text
-                  style={[
-                    styles.mobileIconGlyph,
-                    {
-                      color:
-                        mobileSearchOpen || search.length > 0 ? colors.accentText : colors.text,
-                    },
-                  ]}>
-                  ⌕
-                </Text>
+                <AppIcon
+                  name="search"
+                  size="sm"
+                  color={
+                    mobileSearchOpen || search.length > 0 ? colors.accentText : colors.text
+                  }
+                />
               </RipplePressable>
             </View>
 
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.mobilePillRow}>
+              contentContainerStyle={styles.mobileListsRow}>
+              <Text style={[styles.mobileListsCaption, { color: colors.muted }]}>Списки:</Text>
               {lists.map((list) => {
                 const active = view.kind === 'list' && view.listId === list.id;
                 const count = counts.byList.get(list.id) ?? 0;
@@ -517,6 +1100,7 @@ export function TodoWorkspace() {
                         borderColor: active ? colors.text : colors.line,
                       },
                     ])}>
+                    <AppIcon name="list" size="xs" color={active ? colors.text : colors.muted} />
                     <Text
                       style={[
                         styles.mobileListPillText,
@@ -524,7 +1108,9 @@ export function TodoWorkspace() {
                       ]}>
                       {list.title}
                     </Text>
-                    <Text style={[styles.mobilePillCount, { color: colors.muted }]}>{count}</Text>
+                    {count > 0 ? (
+                      <Text style={[styles.mobilePillCount, { color: colors.muted }]}>{count}</Text>
+                    ) : null}
                   </RipplePressable>
                 );
               })}
@@ -534,29 +1120,30 @@ export function TodoWorkspace() {
                 onPress={() => setListDialog({ open: true, mode: 'create', list: null })}
                 style={StyleSheet.flatten([
                   styles.mobileListPill,
-                  { backgroundColor: colors.surface, borderColor: colors.line },
+                  { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
                 ])}>
-                <Text style={[styles.mobileListPillText, { color: colors.text }]}>+ Список</Text>
+                <AppIcon name="plus" size="xs" color={colors.text} />
+                <Text style={[styles.mobileListPillText, { color: colors.text }]}>Список</Text>
               </RipplePressable>
             </ScrollView>
 
             {mobileSearchOpen ? (
               <View
                 style={[
-                  styles.searchBox,
-                  styles.searchBoxFull,
+                  styles.mobileSearchBox,
                   { backgroundColor: colors.surface, borderColor: colors.line },
                 ]}>
                 <TextInput
                   value={search}
                   onChangeText={setSearch}
+                  autoFocus
                   placeholder="Поиск задач…"
                   placeholderTextColor={colors.muted}
                   style={[styles.searchInput, { color: colors.text }]}
                 />
                 {search.length > 0 ? (
                   <RipplePressable onPress={() => setSearch('')} style={styles.clearBtn}>
-                    <Text style={[styles.clearGlyph, { color: colors.muted }]}>×</Text>
+                    <AppIcon name="close" size="xs" color={colors.muted} />
                   </RipplePressable>
                 ) : null}
               </View>
@@ -564,54 +1151,55 @@ export function TodoWorkspace() {
           </View>
         )}
 
-        {/* Main Panel */}
+        {/* Main Task Panel */}
         <View
           style={[
             styles.panel,
             { backgroundColor: colors.surface, borderColor: colors.line },
           ]}>
-          {/* Panel Header */}
+          {/* Clear Panel Header */}
           <View style={[styles.panelHeader, { borderBottomColor: colors.line }]}>
-            <View style={styles.panelTitleRow}>
-              <Text style={[styles.panelTitle, { color: colors.text }]} numberOfLines={1}>
-                {activeTitle}
-              </Text>
-              <View style={[styles.countPill, { backgroundColor: colors.surfaceSubtle }]}>
-                <Text style={[styles.countPillText, { color: colors.muted }]}>
-                  {visibleTodos.length}
+            <View style={styles.panelHeadingCol}>
+              <View style={styles.panelTitleRow}>
+                <AppIcon
+                  name={activeList ? 'list' : activeSmartMeta?.icon ?? 'circle'}
+                  size="md"
+                  color={activeList ? colors.text : activeSmartMeta?.accent ?? colors.text}
+                />
+                <Text style={[styles.panelTitle, { color: colors.text }]} numberOfLines={1}>
+                  {headerTitle}
                 </Text>
+                {activeList ? (
+                  <RipplePressable
+                    accessibilityLabel="Настройки списка"
+                    onPress={() =>
+                      setListDialog({ open: true, mode: 'edit', list: activeList })
+                    }
+                    style={styles.listEditBtn}>
+                    <AppIcon name="more" size="sm" color={colors.muted} />
+                  </RipplePressable>
+                ) : null}
               </View>
-              {activeList ? (
-                <RipplePressable
-                  accessibilityLabel="Настройки списка"
-                  onPress={() =>
-                    setListDialog({ open: true, mode: 'edit', list: activeList })
-                  }
-                  style={styles.listEditBtn}>
-                  <Text style={[styles.listEditGlyph, { color: colors.muted }]}>⋯</Text>
-                </RipplePressable>
-              ) : null}
+              <Text style={[styles.panelSubtitle, { color: colors.muted }]} numberOfLines={1}>
+                {headerSubtitle}
+              </Text>
             </View>
 
             <View style={styles.panelHeaderActions}>
-              {view.kind === 'smart' && view.filter === 'done' && counts.done > 0 ? (
-                <RipplePressable
-                  onPress={handleClearDone}
-                  style={StyleSheet.flatten([
-                    styles.clearDoneBtn,
-                    {
-                      backgroundColor: confirmClearDone ? colors.danger : colors.dangerBg,
-                    },
-                  ])}>
-                  <Text
-                    style={[
-                      styles.clearDoneLabel,
-                      { color: confirmClearDone ? '#FFFFFF' : colors.danger },
-                    ]}>
-                    {confirmClearDone ? 'Точно очистить?' : 'Очистить'}
-                  </Text>
-                </RipplePressable>
-              ) : null}
+              <UndoRedoButtons
+                compact
+                canUndo={historyMeta.canUndo}
+                canRedo={historyMeta.canRedo}
+                colors={colors}
+                onUndo={() => {
+                  handleUndoTodo();
+                }}
+                onRedo={() => {
+                  handleRedoTodo();
+                }}
+              />
+
+              <View style={[styles.headerDivider, { backgroundColor: colors.line }]} />
 
               {isDesktop ? (
                 <View
@@ -619,6 +1207,7 @@ export function TodoWorkspace() {
                     styles.searchBox,
                     { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
                   ]}>
+                  <AppIcon name="search" size="xs" color={colors.muted} />
                   <TextInput
                     value={search}
                     onChangeText={setSearch}
@@ -628,122 +1217,226 @@ export function TodoWorkspace() {
                   />
                   {search.length > 0 ? (
                     <RipplePressable onPress={() => setSearch('')} style={styles.clearBtn}>
-                      <Text style={[styles.clearGlyph, { color: colors.muted }]}>×</Text>
+                      <AppIcon name="close" size="xs" color={colors.muted} />
                     </RipplePressable>
                   ) : null}
                 </View>
               ) : null}
+
+              {/* Detailed Create Task Modal Trigger (single popup button) */}
+              <RipplePressable
+                accessibilityLabel="Создать задачу с деталями"
+                onPress={() => setCreateModalOpen(true)}
+                style={StyleSheet.flatten([
+                  isDesktop ? styles.headerAddBtn : styles.headerAddBtnMobile,
+                  { backgroundColor: colors.accent },
+                ])}>
+                <AppIcon name="plus" size="xs" color={colors.accentText} />
+                {isDesktop ? (
+                  <Text style={[styles.headerAddLabel, { color: colors.accentText }]}>Задача</Text>
+                ) : null}
+              </RipplePressable>
             </View>
           </View>
 
-          {/* Fast Composer */}
-          {showComposer ? (
-            <View style={[styles.composerWrap, { borderBottomColor: colors.line }]}>
-              <View style={styles.composerRow}>
-                <TextInput
-                  value={draft}
-                  onChangeText={setDraft}
-                  onSubmitEditing={handleAddTodo}
-                  placeholder="Новая задача…"
-                  placeholderTextColor={colors.muted}
-                  returnKeyType="done"
-                  style={[styles.composerInput, { color: colors.text }]}
-                />
-                <RipplePressable
-                  accessibilityLabel="Добавить задачу"
-                  disabled={draft.trim().length === 0}
-                  onPress={handleAddTodo}
-                  style={StyleSheet.flatten([
-                    styles.addBtn,
-                    { backgroundColor: colors.accent },
-                    draft.trim().length === 0 ? styles.addBtnDisabled : null,
-                  ])}>
-                  <Text style={[styles.addBtnLabel, { color: colors.accentText }]}>+</Text>
-                </RipplePressable>
-              </View>
-
-              <View style={styles.composerQuickRow}>
-                <RipplePressable
-                  onPress={cycleDraftPriority}
-                  style={StyleSheet.flatten([
-                    styles.quickChip,
-                    { backgroundColor: colors.surfaceSubtle },
-                  ])}>
-                  <View
-                    style={[
-                      styles.dot,
-                      { backgroundColor: PRIORITY_META[draftPriority].dotColor },
-                    ]}
-                  />
-                  <Text style={[styles.quickChipText, { color: colors.muted }]}>
-                    {PRIORITY_META[draftPriority].shortLabel}
-                  </Text>
-                </RipplePressable>
-
-                {[
-                  { label: 'Сегодня', value: todayKey },
-                  { label: 'Завтра', value: tomorrowKey },
-                ].map((preset) => {
-                  const selected = draftDueDate === preset.value;
+          {/* Priority Filter Strip (when viewing active tasks) */}
+          {!isDoneOnlyView ? (
+            <View style={[styles.sectionToolbar, { borderBottomColor: colors.line }]}>
+              <Text style={[styles.sectionHeading, { color: colors.muted }]}>
+                Активные · {activeTodos.length}
+              </Text>
+              <View style={styles.priorityFilterRow}>
+                {PRIORITY_FILTERS.map((filter) => {
+                  const active = priorityFilter === filter.key;
                   return (
                     <RipplePressable
-                      key={preset.label}
-                      onPress={() =>
-                        setDraftDueDate((current) =>
-                          current === preset.value ? null : preset.value,
-                        )
-                      }
+                      key={filter.key}
+                      onPress={() => setPriorityFilter(filter.key)}
                       style={StyleSheet.flatten([
-                        styles.quickChip,
+                        styles.priorityFilterChip,
                         {
-                          backgroundColor: selected
-                            ? colors.accent
-                            : colors.surfaceSubtle,
+                          backgroundColor: active ? colors.surfaceActive : 'transparent',
+                          borderColor: active ? colors.line : 'transparent',
                         },
                       ])}>
+                      {filter.key !== 'all' ? (
+                        <View
+                          style={[
+                            styles.dot,
+                            { backgroundColor: PRIORITY_META[filter.key].dotColor },
+                          ]}
+                        />
+                      ) : null}
                       <Text
                         style={[
-                          styles.quickChipText,
-                          { color: selected ? colors.accentText : colors.muted },
+                          styles.priorityFilterText,
+                          { color: active ? colors.text : colors.muted },
                         ]}>
-                        {preset.label}
+                        {filter.label}
                       </Text>
                     </RipplePressable>
                   );
                 })}
               </View>
             </View>
+          ) : completedTodos.length > 0 ? (
+            <View style={[styles.sectionToolbar, { borderBottomColor: colors.line }]}>
+              <Text style={[styles.sectionHeading, { color: colors.muted }]}>
+                Выполненные · {completedTodos.length}
+              </Text>
+              <RipplePressable
+                onPress={handleClearDone}
+                style={StyleSheet.flatten([
+                  styles.clearDoneBtn,
+                  { backgroundColor: confirmClearDone ? colors.danger : colors.dangerBg },
+                ])}>
+                <AppIcon
+                  name="trash"
+                  size="xs"
+                  color={confirmClearDone ? '#FFFFFF' : colors.danger}
+                />
+                <Text
+                  style={[
+                    styles.clearDoneLabel,
+                    { color: confirmClearDone ? '#FFFFFF' : colors.danger },
+                  ]}>
+                  {confirmClearDone ? 'Точно очистить все?' : 'Очистить всё'}
+                </Text>
+              </RipplePressable>
+            </View>
           ) : null}
 
-          {/* Task List */}
+          {/* Task Stream: Active Section + Collapsible Completed Section */}
           <ScrollView
             style={styles.listScroll}
             contentContainerStyle={styles.listContent}
             keyboardShouldPersistTaps="handled">
-            {visibleTodos.length === 0 ? (
-              <View style={styles.emptyBox}>
-                <Text style={[styles.emptyText, { color: colors.muted }]}>
-                  {getEmptyMessage()}
-                </Text>
-              </View>
+            {isDoneOnlyView ? (
+              completedTodos.length === 0 ? (
+                <View style={styles.emptyBox}>
+                  <Text style={[styles.emptyText, { color: colors.muted }]}>
+                    {getEmptyMessage()}
+                  </Text>
+                </View>
+              ) : (
+                completedTodos.map(renderTodoRow)
+              )
             ) : (
-              visibleTodos.map((todo) => (
-                <TodoRowItem
-                  key={todo.id}
-                  todo={todo}
-                  listTitle={showListBadges && todo.listId ? listTitleById.get(todo.listId) : null}
-                  colors={colors}
-                  onToggle={() => handleToggleDone(todo.id, !todo.isDone)}
-                  onPress={() => setSelectedTodoId(todo.id)}
-                  onDelete={() => handleDeleteTodo(todo.id)}
-                />
-              ))
+              <>
+                {activeTodos.length === 0 ? (
+                  <View style={styles.emptyBox}>
+                    <Text style={[styles.emptyText, { color: colors.muted }]}>
+                      {getEmptyMessage()}
+                    </Text>
+                  </View>
+                ) : (
+                  activeTodos.map(renderTodoRow)
+                )}
+
+                {/* Clear Collapsible Completed Section inside Active Views */}
+                {completedTodos.length > 0 ? (
+                  <View style={[styles.completedSection, { borderTopColor: colors.line }]}>
+                    <View style={styles.completedHeaderRow}>
+                      <RipplePressable
+                        onPress={() => setShowCompletedInView((v) => !v)}
+                        style={styles.completedToggle}>
+                        <AppIcon
+                          name={showCompletedInView ? 'chevronDown' : 'chevronRight'}
+                          size="xs"
+                          color={colors.muted}
+                        />
+                        <AppIcon name="checkCircle" size="xs" color={colors.success} />
+                        <Text style={[styles.completedHeading, { color: colors.muted }]}>
+                          Выполненные · {completedTodos.length}
+                        </Text>
+                      </RipplePressable>
+
+                      {showCompletedInView ? (
+                        <RipplePressable
+                          onPress={handleClearDone}
+                          style={StyleSheet.flatten([
+                            styles.clearDoneMini,
+                            {
+                              backgroundColor: confirmClearDone
+                                ? colors.danger
+                                : colors.dangerBg,
+                            },
+                          ])}>
+                          <Text
+                            style={[
+                              styles.clearDoneLabel,
+                              { color: confirmClearDone ? '#FFFFFF' : colors.danger },
+                            ]}>
+                            {confirmClearDone ? 'Точно очистить?' : 'Очистить'}
+                          </Text>
+                        </RipplePressable>
+                      ) : null}
+                    </View>
+
+                    {showCompletedInView ? completedTodos.map(renderTodoRow) : null}
+                  </View>
+                ) : null}
+              </>
             )}
           </ScrollView>
+
+          {/* Minimalist Bottom Quick-Add Bar */}
+          {showQuickAdd ? (
+            <View style={[styles.bottomQuickAdd, { borderTopColor: colors.line }]}>
+              <View
+                style={[
+                  styles.bottomQuickAddBox,
+                  { backgroundColor: colors.surfaceSubtle, borderColor: colors.line },
+                ]}>
+                <TextInput
+                  value={quickDraft}
+                  onChangeText={setQuickDraft}
+                  onSubmitEditing={handleQuickAddTodo}
+                  placeholder="Новая задача…"
+                  placeholderTextColor={colors.muted}
+                  returnKeyType="done"
+                  style={[styles.quickAddInput, { color: colors.text }]}
+                />
+                <RipplePressable
+                  accessibilityLabel="Быстро добавить задачу"
+                  disabled={quickDraft.trim().length === 0}
+                  onPress={handleQuickAddTodo}
+                  style={StyleSheet.flatten([
+                    styles.quickAddIconBtn,
+                    {
+                      backgroundColor:
+                        quickDraft.trim().length > 0 ? colors.accent : colors.surface,
+                    },
+                    quickDraft.trim().length === 0 ? styles.disabled : null,
+                  ])}>
+                  <AppIcon
+                    name="plus"
+                    size="sm"
+                    color={quickDraft.trim().length > 0 ? colors.accentText : colors.muted}
+                  />
+                </RipplePressable>
+              </View>
+            </View>
+          ) : null}
         </View>
       </View>
 
       {/* Modals */}
+      <CreateTodoModal
+        visible={createModalOpen}
+        lists={lists}
+        initialListId={targetListForNewTask?.id ?? null}
+        initialDueDate={
+          view.kind === 'smart' && view.filter === 'today'
+            ? todayKey
+            : view.kind === 'smart' && view.filter === 'upcoming'
+              ? tomorrowKey
+              : null
+        }
+        onClose={() => setCreateModalOpen(false)}
+        onCreate={handleCreateDetailedTodo}
+      />
+
       <TodoDetailModal
         todo={selectedTodo}
         lists={lists}
@@ -765,6 +1458,40 @@ export function TodoWorkspace() {
         onSubmit={handleListSubmit}
         onDelete={handleListDelete}
       />
+
+      <DragTrashZone
+        visible={draggingTodoId !== null || (draggingListId !== null && lists.length > 1)}
+        label={draggingListId ? 'Удалить список' : 'Удалить задачу'}
+        colors={colors}
+        onDropDelete={async (event) => {
+          if (draggingListId && lists.length > 1) {
+            const targetListId =
+              event.dataTransfer?.getData('text/sotaq-todo-list') || draggingListId;
+            setDraggingListId(null);
+            setListDropTarget(null);
+            pushTodoHistory('Удаление списка');
+            await deleteTodoList(db, targetListId);
+            if (view.kind === 'list' && view.listId === targetListId) {
+              setView({ kind: 'smart', filter: 'all' });
+            }
+            await refreshAll();
+            return;
+          }
+          if (draggingTodoId) {
+            const todoId =
+              event.dataTransfer?.getData('text/sotaq-todo') ||
+              event.dataTransfer?.getData('text/plain') ||
+              draggingTodoId;
+            setDraggingTodoId(null);
+            setTodoDropTarget(null);
+            setDropSmartFilter(null);
+            setDropListId(null);
+            await handleDeleteTodo(todoId);
+          }
+        }}
+      />
+
+      <HistoryToast message={historyToast} colors={colors} />
     </View>
   );
 }
@@ -789,7 +1516,7 @@ const styles = StyleSheet.create({
   },
   layout: {
     width: '100%',
-    maxWidth: 1040,
+    maxWidth: 1080,
     flex: 1,
     minHeight: 0,
   },
@@ -802,28 +1529,36 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   rail: {
-    width: 228,
+    width: 248,
     borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
     padding: 12,
-    gap: 10,
+    gap: 12,
   },
   railSection: {
     gap: 3,
+  },
+  railListsFlex: {
+    flex: 1,
+    minHeight: 0,
+  },
+  railListsScroll: {
+    gap: 2,
+    paddingBottom: 6,
   },
   railHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingRight: 4,
+    paddingRight: 2,
   },
   railCaption: {
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 10,
+    fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 4,
   },
   railAddBtn: {
     width: 24,
@@ -832,14 +1567,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  railAddGlyph: {
-    fontSize: 18,
-    lineHeight: 20,
-  },
-  railDivider: {
-    height: StyleSheet.hairlineWidth,
-    marginVertical: 2,
-  },
   railItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -847,20 +1574,88 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
   },
-  railBadge: {
-    width: 18,
-    textAlign: 'center',
-    fontSize: 13,
+  railListRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingLeft: 10,
+    paddingRight: 6,
+    minHeight: 36,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+    ...(Platform.OS === 'web'
+      ? ({ transition: 'background-color 120ms ease', userSelect: 'none' } as object)
+      : null),
+  },
+  railListMain: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingVertical: 7,
+    ...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as object) : null),
+  },
+  railListEditBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  railDropTarget: {
+    borderColor: DROP_BLUE,
+    backgroundColor: 'rgba(35, 131, 226, 0.12)',
+  },
+  railListItemWrap: {
+    position: 'relative',
+  },
+  railDropLine: {
+    height: 2,
+    borderRadius: 2,
+    backgroundColor: DROP_BLUE,
+    marginHorizontal: 8,
+    marginVertical: 1,
+  },
+  draggingList: {
+    opacity: 0.35,
   },
   railLabel: {
     flex: 1,
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  railCountPill: {
+    minWidth: 22,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+    alignItems: 'center',
   },
   railCount: {
-    fontSize: 12,
+    fontSize: 11,
+    fontWeight: '600',
     fontVariant: ['tabular-nums'],
+  },
+  railDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginHorizontal: 4,
+  },
+  railDragHint: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+  },
+  railDragHintText: {
+    fontSize: 11,
+    fontWeight: '600',
   },
   mobileFiltersWrap: {
     gap: 8,
@@ -874,6 +1669,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    paddingRight: 4,
+  },
+  mobileListsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingRight: 4,
+  },
+  mobileListsCaption: {
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginRight: 2,
   },
   mobilePill: {
     flexDirection: 'row',
@@ -881,17 +1690,18 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 11,
     paddingVertical: 7,
-    borderRadius: 10,
+    borderRadius: 999,
     borderWidth: StyleSheet.hairlineWidth,
   },
   mobilePillText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
   },
   mobilePillCount: {
     fontSize: 11,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
+    opacity: 0.8,
   },
   mobileIconBtn: {
     width: 34,
@@ -901,16 +1711,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  mobileIconGlyph: {
-    fontSize: 16,
-    lineHeight: 18,
-  },
   mobileListPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 6,
     borderRadius: 9,
     borderWidth: StyleSheet.hairlineWidth,
   },
@@ -918,8 +1724,17 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  mobileSearchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 12,
+    height: 38,
+  },
   panel: {
     flex: 1,
+    minWidth: 0,
     minHeight: 0,
     borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
@@ -934,152 +1749,206 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
+  panelHeadingCol: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
   panelTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    flex: 1,
-    minWidth: 0,
   },
   panelTitle: {
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '700',
+    letterSpacing: -0.3,
     flexShrink: 1,
   },
-  countPill: {
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 999,
-  },
-  countPillText: {
-    fontSize: 11,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
+  panelSubtitle: {
+    fontSize: 12,
+    fontWeight: '500',
   },
   listEditBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
+    width: 26,
+    height: 26,
+    borderRadius: 7,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  listEditGlyph: {
-    fontSize: 16,
   },
   panelHeaderActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  clearDoneBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  clearDoneLabel: {
-    fontSize: 12,
-    fontWeight: '600',
+  headerDivider: {
+    width: 1,
+    height: 18,
   },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    width: 190,
-    height: 34,
-    borderRadius: 10,
+    gap: 6,
+    borderRadius: 9,
     borderWidth: StyleSheet.hairlineWidth,
-    paddingLeft: 10,
-    paddingRight: 4,
-  },
-  searchBoxFull: {
-    width: '100%',
+    paddingHorizontal: 10,
+    height: 32,
+    width: 170,
   },
   searchInput: {
     flex: 1,
     fontSize: 13,
-    paddingVertical: 4,
+    paddingVertical: 0,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
   },
   clearBtn: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
+    width: 20,
+    height: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  clearGlyph: {
-    fontSize: 16,
-    lineHeight: 18,
-  },
-  composerWrap: {
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: 10,
-    gap: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  composerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  composerInput: {
-    flex: 1,
-    fontSize: 15,
-    paddingVertical: 7,
-    paddingHorizontal: 6,
-  },
-  addBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  addBtnDisabled: {
-    opacity: 0.35,
-  },
-  addBtnLabel: {
-    fontSize: 20,
-    lineHeight: 22,
-    fontWeight: '600',
-  },
-  composerQuickRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 6,
-    paddingLeft: 4,
-  },
-  quickChip: {
+  headerAddBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
+    height: 32,
+    paddingHorizontal: 12,
+    borderRadius: 9,
+  },
+  headerAddBtnMobile: {
+    width: 32,
+    height: 32,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerAddLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  bottomQuickAdd: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    padding: 10,
+  },
+  bottomQuickAddBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 11,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingLeft: 12,
+    paddingRight: 5,
+    paddingVertical: 5,
+  },
+  quickAddInput: {
+    flex: 1,
+    fontSize: 14,
+    paddingVertical: 5,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
+  },
+  quickAddIconBtn: {
+    width: 32,
+    height: 32,
     borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  disabled: {
+    opacity: 0.35,
+  },
+  sectionToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexWrap: 'wrap',
+  },
+  sectionHeading: {
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  priorityFilterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  priorityFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 7,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  priorityFilterText: {
+    fontSize: 11,
+    fontWeight: '600',
   },
   dot: {
     width: 6,
     height: 6,
     borderRadius: 3,
   },
-  quickChipText: {
-    fontSize: 12,
+  clearDoneBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  clearDoneMini: {
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 7,
+  },
+  clearDoneLabel: {
+    fontSize: 11,
     fontWeight: '600',
   },
   listScroll: {
     flex: 1,
   },
   listContent: {
-    paddingBottom: 16,
+    paddingBottom: 28,
   },
   emptyBox: {
+    paddingVertical: 42,
     paddingHorizontal: 20,
-    paddingVertical: 32,
     alignItems: 'center',
   },
   emptyText: {
     fontSize: 14,
-    lineHeight: 20,
     textAlign: 'center',
+    lineHeight: 20,
+  },
+  completedSection: {
+    marginTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  completedHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  completedToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    borderRadius: 7,
+  },
+  completedHeading: {
+    fontSize: 12,
+    fontWeight: '600',
   },
 });
